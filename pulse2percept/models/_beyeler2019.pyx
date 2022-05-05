@@ -1,9 +1,10 @@
+from libc.math cimport(pow as c_pow, exp as c_exp, tanh as c_tanh,
+                       sin as c_sin, cos as c_cos, fabs as c_abs,
+                       isnan as c_isnan)
+from cython.parallel import prange
+from cython import cdivision  # for modulo operator
 import numpy as np
 cimport numpy as cnp
-from cython import cdivision  # for modulo operator
-from cython.parallel import prange
-from libc.math cimport(pow as c_pow, exp as c_exp, tanh as c_tanh,
-                       sin as c_sin, cos as c_cos, fabs as c_abs)
 
 ctypedef cnp.float32_t float32
 ctypedef cnp.uint32_t uint32
@@ -19,7 +20,8 @@ cpdef fast_scoreboard(const float32[:, ::1] stim,
                       const float32[::1] xgrid,
                       const float32[::1] ygrid,
                       float32 rho,
-                      float32 thresh_percept):
+                      float32 thresh_percept,
+                      uint32 n_threads):
     """Fast spatial response of the scoreboard model
 
     Parameters
@@ -38,7 +40,9 @@ cpdef fast_scoreboard(const float32[:, ::1] stim,
         constant for the current spread
     thresh_percept : float32
         Spatial responses smaller than ``thresh_percept`` will be set to zero
-
+    n_threads: uint32
+        Number of CPU threads to use during parallelization using OpenMP.
+    
     """
     cdef:
         int32 idx_el, idx_time, idx_space, idx_bright
@@ -54,10 +58,14 @@ cpdef fast_scoreboard(const float32[:, ::1] stim,
     # A flattened array containing n_time x n_space entries:
     bright = np.empty((n_space, n_time), dtype=np.float32)  # Py overhead
 
-    for idx_bright in prange(n_bright, schedule='static', nogil=True):
+    for idx_bright in prange(n_bright, schedule='static', nogil=True, num_threads=n_threads):
         # For each entry in the output matrix:
         idx_space = idx_bright % n_space
         idx_time = idx_bright / n_space
+
+        if c_isnan(xgrid[idx_space]) or c_isnan(ygrid[idx_space]):
+            bright[idx_space, idx_time] = 0.0
+            continue
 
         px_bright = 0.0
         for idx_el in range(n_el):
@@ -71,8 +79,6 @@ cpdef fast_scoreboard(const float32[:, ::1] stim,
             px_bright = 0.0
         bright[idx_space, idx_time] = px_bright  # Py overhead
     return np.asarray(bright)  # Py overhead
-
-
 
 
 cpdef fast_jansonius(float32[::1] rho, float32 phi0, float32 beta_s,
@@ -145,7 +151,8 @@ cpdef fast_axon_map(const float32[:, ::1] stim,
                     const uint32[::1] idx_start,
                     const uint32[::1] idx_end,
                     float32 rho,
-                    float32 thresh_percept):
+                    float32 thresh_percept,
+                    uint32 n_threads):
     """Fast spatial response of the axon map model
 
     Parameters
@@ -173,6 +180,9 @@ cpdef fast_axon_map(const float32[:, ::1] stim,
         axon contribution (stored/passed in ``axon``).
     thresh_percept : float32
         Spatial responses smaller than ``thresh_percept`` will be set to zero
+    n_threads: uint32
+        Number of CPU threads to use during parallelization using OpenMP.
+    
     """
     cdef:
         int32 idx_el, idx_time, idx_space, idx_ax, idx_bright
@@ -190,7 +200,7 @@ cpdef fast_axon_map(const float32[:, ::1] stim,
     bright = np.empty((n_space, n_time), dtype=np.float32)  # Py overhead
 
     # Parallel loop over all pixels to be rendered:
-    for idx_space in prange(n_space, schedule='static', nogil=True):
+    for idx_space in prange(n_space, schedule='static', nogil=True, num_threads=n_threads):
         # Each frame in `stim` is treated independently, so we can have an
         # inner loop over all points in time:
         for idx_time in range(n_time):
@@ -209,6 +219,9 @@ cpdef fast_axon_map(const float32[:, ::1] stim,
                 for idx_el in range(n_el):
                     amp = stim[idx_el, idx_time]
                     if c_abs(amp) > 0:
+                        if (c_isnan(axon_segments[idx_ax, 0]) or
+                                c_isnan(axon_segments[idx_ax, 1])):
+                            continue
                         # Calculate the distance between this axon segment and
                         # the center of the stimulating electrode:
                         xdiff = axon_segments[idx_ax, 0] - xel[idx_el]
@@ -234,4 +247,3 @@ cpdef fast_axon_map(const float32[:, ::1] stim,
                 px_bright = 0.0
             bright[idx_space, idx_time] = px_bright  # Py overhead
     return np.asarray(bright)  # Py overhead
-

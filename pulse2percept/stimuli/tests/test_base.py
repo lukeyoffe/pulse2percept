@@ -8,6 +8,7 @@ from matplotlib.axes import Subplot
 import matplotlib.pyplot as plt
 
 from pulse2percept.stimuli import Stimulus
+from pulse2percept.stimuli import BiphasicPulseTrain
 from pulse2percept.utils.constants import DT
 from pulse2percept.utils.testing import assert_warns_msg
 
@@ -265,7 +266,7 @@ def test_Stimulus_plot():
     # Plot multiple electrodes with string names:
     for n_electrodes in [2, 3, 4]:
         stim = Stimulus(np.random.rand(n_electrodes, 20),
-                        electrodes=['E%d' % i for i in range(n_electrodes)])
+                        electrodes=[f'E{i}' for i in range(n_electrodes)])
         fig, axes = plt.subplots(ncols=n_electrodes)
         stim.plot(ax=axes)
         npt.assert_equal(isinstance(axes, (list, np.ndarray)), True)
@@ -546,3 +547,27 @@ def test_Stimulus_arithmetic(scalar):
         s = stim >> np.array([2, 3])
     with pytest.raises(TypeError):
         s = stim << np.array([2, 3])
+
+
+def test_Stimulus_remove():
+    stim = Stimulus([[0, 1, 2], [3, 4, 5]], electrodes=['A1', 'C3'])
+    npt.assert_equal('A1' in stim.electrodes, True)
+    npt.assert_equal('C3' in stim.electrodes, True)
+    stim.remove('A1')
+    npt.assert_equal('A1' in stim.electrodes, False)
+    npt.assert_equal('C3' in stim.electrodes, True)
+
+
+def test_merge_time_axes_merge_tolerance():
+    # Test issue where not enough unique points were collected
+    # Leading to interpolation to corrupt stimuli data.
+    # See: https://github.com/pulse2percept/pulse2percept/issues/392
+    a = BiphasicPulseTrain(20, 1, 0.45)
+    b = BiphasicPulseTrain(30, 1, 0.45)
+
+    stim = Stimulus({"A2": a, "A10": b})
+    unique_points = np.unique(stim.data)
+
+    # Assert no value goes close to 1/3 or -1/3, i.e. a corrupted data point
+    npt.assert_equal(np.isclose(1/3, unique_points, atol=0.1).any(), False)
+    npt.assert_equal(np.isclose(-1/3, unique_points, atol=0.1).any(), False)

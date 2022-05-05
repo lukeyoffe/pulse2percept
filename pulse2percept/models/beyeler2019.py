@@ -8,7 +8,7 @@ from scipy.spatial import cKDTree
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 
-from ..utils import parfor, Watson2014Transform
+from ..utils import parfor, Watson2014Map
 from ..utils.constants import ZORDER
 from ..implants import ProsthesisSystem, ElectrodeArray
 from ..stimuli import Stimulus
@@ -39,45 +39,52 @@ class ScoreboardSpatial(SpatialModel):
     ----------
     rho : double, optional
         Exponential decay constant describing phosphene size (microns).
-    x_range : (x_min, x_max), optional
+    xrange : (x_min, x_max), optional
         A tuple indicating the range of x values to simulate (in degrees of
         visual angle). In a right eye, negative x values correspond to the
         temporal retina, and positive x values to the nasal retina. In a left
         eye, the opposite is true.
-    y_range : tuple, (y_min, y_max)
+    yrange : tuple, (y_min, y_max), optional
         A tuple indicating the range of y values to simulate (in degrees of
         visual angle). Negative y values correspond to the superior retina,
         and positive y values to the inferior retina.
-    xystep : int, double, tuple
+    xystep : int, double, tuple, optional
         Step size for the range of (x,y) values to simulate (in degrees of
         visual angle). For example, to create a grid with x values [0, 0.5, 1]
-        use ``x_range=(0, 1)`` and ``xystep=0.5``.
-    grid_type : {'rectangular', 'hexagonal'}
+        use ``xrange=(0, 1)`` and ``xystep=0.5``.
+    grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
+    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+        object that provides ``ret2dva`` and ``dva2ret`` methods.
+        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        used.
+    n_gray : int, optional
+        The number of gray levels to use. If an integer is given, k-means
+        clustering is used to compress the color space of the percept into
+        ``n_gray`` bins. If None, no compression is performed.
+    noise : float or int, optional
+        Adds salt-and-pepper noise to each percept frame. An integer will be
+        interpreted as the number of pixels to subject to noise in each frame.
+        A float between 0 and 1 will be interpreted as a ratio of pixels to
+        subject to noise in each frame.
+
+    n_threads : int, optional
+        Number of CPU threads to use during parallelization using OpenMP. 
+        Defaults to max number of user CPU cores.
 
     .. important ::
 
         If you change important model parameters outside the constructor (e.g.,
-        by directly setting ``model.axlambda = 100``), you will have to call
+        by directly setting ``model.xrange = (-10, 10)``), you will have to call
         ``model.build()`` again for your changes to take effect.
-
     """
 
     def get_default_params(self):
         """Returns all settable parameters of the scoreboard model"""
-        params = super(ScoreboardSpatial, self).get_default_params()
-        params.update({'rho': 100})
-        return params
-
-    @staticmethod
-    def dva2ret(xdva):
-        """Convert degrees of visual angle (dva) into retinal coords (um)"""
-        return Watson2014Transform.dva2ret(xdva)
-
-    @staticmethod
-    def ret2dva(xret):
-        """Convert retinal corods (um) to degrees of visual angle (dva)"""
-        return Watson2014Transform.ret2dva(xret)
+        base_params = super(ScoreboardSpatial, self).get_default_params()
+        params = {'rho': 100, 'retinotopy': Watson2014Map()}
+        return {**base_params, **params}
 
     def _predict_spatial(self, earray, stim):
         """Predicts the brightness at spatial locations"""
@@ -95,7 +102,8 @@ class ScoreboardSpatial(SpatialModel):
                                self.grid.xret.ravel(),
                                self.grid.yret.ravel(),
                                self.rho,
-                               self.thresh_percept)
+                               self.thresh_percept,
+                               self.n_threads)
 
 
 class ScoreboardModel(Model):
@@ -114,26 +122,51 @@ class ScoreboardModel(Model):
     ----------
     rho : double, optional
         Exponential decay constant describing phosphene size (microns).
-    x_range : (x_min, x_max), optional
+    xrange : (x_min, x_max), optional
         A tuple indicating the range of x values to simulate (in degrees of
         visual angle). In a right eye, negative x values correspond to the
         temporal retina, and positive x values to the nasal retina. In a left
         eye, the opposite is true.
-    y_range : tuple, (y_min, y_max)
+    yrange : tuple, (y_min, y_max), optional
         A tuple indicating the range of y values to simulate (in degrees of
         visual angle). Negative y values correspond to the superior retina,
         and positive y values to the inferior retina.
-    xystep : int, double, tuple
+    xystep : int, double, tuple, optional
         Step size for the range of (x,y) values to simulate (in degrees of
         visual angle). For example, to create a grid with x values [0, 0.5, 1]
-        use ``x_range=(0, 1)`` and ``xystep=0.5``.
-    grid_type : {'rectangular', 'hexagonal'}
+        use ``xrange=(0, 1)`` and ``xystep=0.5``.
+    grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
+    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+        object that provides ``ret2dva`` and ``dva2ret`` methods.
+        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        used.
+    n_gray : int, optional
+        The number of gray levels to use. If an integer is given, k-means
+        clustering is used to compress the color space of the percept into
+        ``n_gray`` bins. If None, no compression is performed.
+    noise : float or int, optional
+        Adds salt-and-pepper noise to each percept frame. An integer will be
+        interpreted as the number of pixels to subject to noise in each frame.
+        A float between 0 and 1 will be interpreted as a ratio of pixels to
+        subject to noise in each frame.
+    n_threads : int, optional
+        Number of CPU threads to use during parallelization using OpenMP. 
+        Defaults to max number of user CPU cores.
+
+    .. important ::
+
+        If you change important model parameters outside the constructor (e.g.,
+        by directly setting ``model.xrange = (-10, 10)``), you will have to call
+        ``model.build()`` again for your changes to take effect.
+
     """
 
     def __init__(self, **params):
         super(ScoreboardModel, self).__init__(spatial=ScoreboardSpatial(),
-                                              temporal=None, **params)
+                                              temporal=None,
+                                              **params)
 
 
 class AxonMapSpatial(SpatialModel):
@@ -151,51 +184,78 @@ class AxonMapSpatial(SpatialModel):
 
     Parameters
     ----------
-    axlambda: double, optional
+    axlambda : double, optional
         Exponential decay constant along the axon(microns).
-    rho: double, optional
+    rho : double, optional
         Exponential decay constant away from the axon(microns).
-    eye: {'RE', LE'}, optional
+    eye : {'RE', LE'}, optional
         Eye for which to generate the axon map.
     xrange : (x_min, x_max), optional
         A tuple indicating the range of x values to simulate (in degrees of
         visual angle). In a right eye, negative x values correspond to the
         temporal retina, and positive x values to the nasal retina. In a left
         eye, the opposite is true.
-    yrange : tuple, (y_min, y_max)
+    yrange : (y_min, y_max), optional
         A tuple indicating the range of y values to simulate (in degrees of
         visual angle). Negative y values correspond to the superior retina,
         and positive y values to the inferior retina.
-    xystep : int, double, tuple
+    xystep : int or double or tuple, optional
         Step size for the range of (x,y) values to simulate (in degrees of
         visual angle). For example, to create a grid with x values [0, 0.5, 1]
-        use ``x_range=(0, 1)`` and ``xystep=0.5``.
-    grid_type : {'rectangular', 'hexagonal'}
+        use ``xrange=(0, 1)`` and ``xystep=0.5``.
+    grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
-    loc_od, loc_od: (x,y), optional
+    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+        object that provides ``ret2dva`` and ``dva2ret`` methods.
+        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        used.
+    n_gray : int, optional
+        The number of gray levels to use. If an integer is given, k-means
+        clustering is used to compress the color space of the percept into
+        ``n_gray`` bins. If None, no compression is performed.
+    noise : float or int, optional
+        Adds salt-and-pepper noise to each percept frame. An integer will be
+        interpreted as the number of pixels to subject to noise in each frame.
+        A float between 0 and 1 will be interpreted as a ratio of pixels to
+        subject to noise in each frame.
+    loc_od, loc_od : (x,y), optional
         Location of the optic disc in degrees of visual angle. Note that the
         optic disc in a left eye will be corrected to have a negative x
         coordinate.
-    n_axons: int, optional
+    n_axons : int, optional
         Number of axons to generate.
-    axons_range: (min, max), optional
+    axons_range : (min, max), optional
         The range of angles(in degrees) at which axons exit the optic disc.
         This corresponds to the range of $\\phi_0$ values used in
         [Jansonius2009]_.
-    n_ax_segments: int, optional
+    n_ax_segments : int, optional
         Number of segments an axon is made of.
-    ax_segments_range: (min, max), optional
+    ax_segments_range : (min, max), optional
         Lower and upper bounds for the radial position values(polar coords)
         for each axon.
-    min_ax_sensitivity: float, optional
+    min_ax_sensitivity : float, optional
         Axon segments whose contribution to brightness is smaller than this
         value will be pruned to improve computational efficiency. Set to a
-        value between 0 and 1.
-    axon_pickle: str, optional
+        value between 0 and 1. If engine is jax, all other axons will be padded
+        to the length enforced by this constraint.
+    engine : string, optional
+        Engine to use for computation. Options are 'serial', 'cython', and 'jax'.
+        Defaults to 'cython'
+    axon_pickle : str, optional
         File name in which to store precomputed axon maps.
-    ignore_pickle: bool, optional
+    ignore_pickle : bool, optional
         A flag whether to ignore the pickle file in future calls to
         ``model.build()``.
+    n_threads : int, optional
+        Number of CPU threads to use during parallelization using OpenMP. 
+        Defaults to max number of user CPU cores.
+
+    .. important ::
+
+        If you change important model parameters outside the constructor (e.g.,
+        by directly setting ``model.axlambda = 100``), you will have to call
+        ``model.build()`` again for your changes to take effect.
 
     Notes
     -----
@@ -215,7 +275,7 @@ class AxonMapSpatial(SpatialModel):
             # Left or right eye:
             'eye': 'RE',
             'rho': 200,
-            'axlambda': 200,
+            'axlambda': 500,
             # Set the (x,y) location of the optic disc:
             'loc_od': (15.5, 1.5),
             'n_axons': 1000,
@@ -232,30 +292,10 @@ class AxonMapSpatial(SpatialModel):
             'axon_pickle': 'axons.pickle',
             # You can force a build by ignoring pickles:
             'ignore_pickle': False,
+            # Use the Watson transform for dva <=> ret:
+            'retinotopy': Watson2014Map()
         }
-        params.update(base_params)
-        return params
-
-    @staticmethod
-    def dva2ret(xdva):
-        """Convert degrees of visual angle (dva) into retinal coords (um)
-
-        The axon map model converts degrees of visual angle into a retinal 
-        distance from the optic axis (um) using Eq. A5 in [Watson2014]_.
-
-        """
-        return Watson2014Transform.dva2ret(xdva)
-
-    @staticmethod
-    def ret2dva(xret):
-        """Convert retinal corods (um) to degrees of visual angle (dva)
-
-        The axon map model converts an eccentricity measurement on the retinal
-        surface(in micrometers), measured from the optic axis, into degrees
-        of visual angle using Eq. A6 in [Watson2014]_.
-
-        """
-        return Watson2014Transform.ret2dva(xret)
+        return {**base_params, **params}
 
     def _jansonius2009(self, phi0, beta_sup=-1.9, beta_inf=0.5, eye='RE'):
         """Grows a single axon bundle based on the model by Jansonius (2009)
@@ -292,7 +332,7 @@ class AxonMapSpatial(SpatialModel):
         # Check for the location of the optic disc:
         loc_od = self.loc_od
         if eye.upper() not in ['LE', 'RE']:
-            e_s = "Unknown eye string '%s': Choose from 'LE', 'RE'." % eye
+            e_s = f"Unknown eye string '{eye}': Choose from 'LE', 'RE'."
             raise ValueError(e_s)
         if eye.upper() == 'LE':
             # The Jansonius model doesn't know about left eyes: We invert the x
@@ -396,7 +436,7 @@ class AxonMapSpatial(SpatialModel):
             n_bundles = self.n_axons
         # Build the Jansonius model: Grow a number of axon bundles in all dirs:
         phi = np.linspace(*self.axons_range, num=n_bundles)
-        engine = 'serial' if self.engine == 'cython' else self.engine
+        engine = 'serial' if self.engine in ['cython', 'jax'] else self.engine
         bundles = parfor(self._jansonius2009, phi,
                          func_kwargs={'eye': self.eye},
                          engine=engine, n_jobs=self.n_jobs,
@@ -415,7 +455,8 @@ class AxonMapSpatial(SpatialModel):
             # Keep only reasonably sized axon bundles:
             bundles = list(filter(lambda x: len(x) > 10, bundles))
         # Convert to um:
-        bundles = [self.dva2ret(b) for b in bundles]
+        bundles = [np.array(self.retinotopy.dva2ret(b[:, 0], b[:, 1])).T
+                   for b in bundles]
         return bundles
 
     def find_closest_axon(self, bundles, xret=None, yret=None,
@@ -482,7 +523,7 @@ class AxonMapSpatial(SpatialModel):
             return closest_axon, closest_idx
         return closest_axon
 
-    def calc_axon_sensitivity(self, bundles):
+    def calc_axon_sensitivity(self, bundles, pad=False):
         """Calculate the sensitivity of each axon segment to electrical current
 
         This function combines the x,y coordinates of each bundle segment with
@@ -503,6 +544,9 @@ class AxonMapSpatial(SpatialModel):
         that the only work left to do during run time is to multiply the
         sensitivity value with the current applied to each segment.
 
+        If pad is True (set when engine is 'jax'), axons are padded to all have 
+        the same length as the longest axon
+
         Parameters
         ----------
         bundles : list of Nx2 arrays
@@ -512,12 +556,13 @@ class AxonMapSpatial(SpatialModel):
 
         Returns
         -------
-        axon_contrib : list of Nx3 arrays
-            A list of axon segments and sensitivity values. Each entry in the
-            list is a Nx3 array, where the first two columns contain the retinal
+        axon_contrib : numpy array with shape (n_points, axon_length, 3)
+            An array of axon segments and sensitivity values. Each entry in the
+            array is a Nx3 array, where the first two columns contain the retinal
             coordinates of each axon segment (microns), and the third column
             contains the sensitivity of the segment to electrical current.
-            The latter depends on ``self.axlambda``.
+            The latter depends on ``self.axlambda``. axon_length is set to the 
+            maximum length of any axon after being trimmed due to min_sensitivity 
 
         """
         xyret = np.column_stack((self.grid.xret.ravel(),
@@ -543,7 +588,23 @@ class AxonMapSpatial(SpatialModel):
             idx_d2 = np.concatenate(([False], idx_d2))
             contrib = np.column_stack((axon[idx_d2, :], sensitivity))
             axon_contrib.append(contrib)
-        return axon_contrib
+
+        if pad:
+            # pad to length of longest axon
+            axon_length = max([len(axon) for axon in axon_contrib])
+            axon_sensitivities = np.zeros((len(axon_contrib), axon_length, 3))
+            for i, axon in enumerate(axon_contrib):
+                original_len = len(axon)
+                if original_len >= axon_length:
+                    axon_sensitivities[i] = axon[:axon_length]
+                elif original_len != 0:
+                    axon_sensitivities[i, :original_len] = axon
+                    axon_sensitivities[i, original_len:] = axon[-1]
+
+            del axon_contrib
+            return axon_sensitivities
+        else:
+            return axon_contrib
 
     def calc_bundle_tangent(self, xc, yc):
         """Calculates orientation of fiber bundle tangent at (xc, yc)
@@ -596,7 +657,7 @@ class AxonMapSpatial(SpatialModel):
             # In a right eye, the optic disc must have a positive x coordinate:
             self.loc_od = (np.abs(self.loc_od[0]), self.loc_od[1])
         else:
-            err_str = ("Eye should be either 'LE' or 'RE', not %s." % self.eye)
+            err_str = (f"Eye should be either 'LE' or 'RE', not {self.eye}.")
             raise ValueError(err_str)
 
     def _build(self):
@@ -624,23 +685,34 @@ class AxonMapSpatial(SpatialModel):
         if need_axons:
             bundles = self.grow_axon_bundles()
             axons = self.find_closest_axon(bundles)
-        # Calculate axon contributions (depends on axlambda):
-        # Axon contribution is a list of (differently shaped) NumPy arrays,
-        # and a list cannot be accessed in parallel without the gil. Instead
-        # we need to concatenate it into a really long Nx3 array, and pass the
-        # start and end indices of each slice:
-        axon_contrib = self.calc_axon_sensitivity(axons)
-        self.axon_contrib = np.concatenate(axon_contrib).astype(np.float32)
-        len_axons = [a.shape[0] for a in axon_contrib]
-        self.axon_idx_end = np.cumsum(len_axons)
-        self.axon_idx_start = self.axon_idx_end - np.array(len_axons)
-        # Pickle axons along with all important parameters:
-        params = {'loc_od': self.loc_od,
-                  'n_axons': self.n_axons, 'axons_range': self.axons_range,
-                  'xrange': self.xrange, 'yrange': self.yrange,
-                  'xystep': self.xystep, 'n_ax_segments': self.n_ax_segments,
-                  'ax_segments_range': self.ax_segments_range}
-        pickle.dump((params, axons), open(self.axon_pickle, 'wb'))
+            if type(axons) != list:
+                axons = [axons]
+        # Calculate axon contributions (depends on engine):
+        # If engine is cython or serial:
+        #   Axon contribution is a list of (differently shaped) NumPy arrays,
+        #   and a list cannot be accessed in parallel without the gil. Instead
+        #   we need to concatenate it into a really long Nx3 array, and pass the
+        #   start and end indices of each slice:
+        # If engine is jax:
+        #   All axons are the same length, so Axon contribution is an array with
+        #   shape (n, axon_length, 3)
+        if self.engine == 'jax':
+            self.axon_contrib = self.calc_axon_sensitivity(
+                axons, pad=True).astype(np.float32)
+        else:
+            axon_contrib = self.calc_axon_sensitivity(axons)
+            self.axon_contrib = np.concatenate(axon_contrib).astype(np.float32)
+            len_axons = [a.shape[0] for a in axon_contrib]
+            self.axon_idx_end = np.cumsum(len_axons)
+            self.axon_idx_start = self.axon_idx_end - np.array(len_axons)
+        if need_axons:
+            # Pickle axons along with all important parameters:
+            params = {'loc_od': self.loc_od,
+                      'n_axons': self.n_axons, 'axons_range': self.axons_range,
+                      'xrange': self.xrange, 'yrange': self.yrange,
+                      'xystep': self.xystep, 'n_ax_segments': self.n_ax_segments,
+                      'ax_segments_range': self.ax_segments_range}
+            pickle.dump((params, axons), open(self.axon_pickle, 'wb'))
 
     def _predict_spatial(self, earray, stim):
         """Predicts the brightness at specific times ``t``"""
@@ -650,18 +722,23 @@ class AxonMapSpatial(SpatialModel):
             warnings.warn(msg)
         # This does the expansion of a compact stimulus and a list of
         # electrodes to activation values at X,Y grid locations:
-        return fast_axon_map(stim.data,
-                             np.array([earray[e].x for e in stim.electrodes],
-                                      dtype=np.float32),
-                             np.array([earray[e].y for e in stim.electrodes],
-                                      dtype=np.float32),
-                             self.axon_contrib,
-                             self.axon_idx_start.astype(np.uint32),
-                             self.axon_idx_end.astype(np.uint32),
-                             self.rho,
-                             self.thresh_percept)
+        if self.engine != 'jax':
+            return fast_axon_map(stim.data,
+                                 np.array([earray[e].x for e in stim.electrodes],
+                                          dtype=np.float32),
+                                 np.array([earray[e].y for e in stim.electrodes],
+                                          dtype=np.float32),
+                                 self.axon_contrib,
+                                 self.axon_idx_start.astype(np.uint32),
+                                 self.axon_idx_end.astype(np.uint32),
+                                 self.rho,
+                                 self.thresh_percept,
+                                 self.n_threads)
+        else:
+            raise NotImplementedError("Jax will be supported in future release")
 
-    def plot(self, use_dva=False, annotate=True, autoscale=True, ax=None):
+    def plot(self, use_dva=False, style='hull', annotate=True, autoscale=True,
+             ax=None, figsize=None):
         """Plot the axon map
 
         Parameters
@@ -669,6 +746,14 @@ class AxonMapSpatial(SpatialModel):
         use_dva : bool, optional
             Uses degrees of visual angle (dva) if True, else retinal
             coordinates (microns)
+        style : {'hull', 'scatter', 'cell'}, optional
+            Grid plotting style:
+
+            * 'hull': Show the convex hull of the grid (that is, the outline of
+              the smallest convex set that contains all grid points).
+            * 'scatter': Scatter plot all grid points
+            * 'cell': Show the outline of each grid cell as a polygon. Note that
+              this can be costly for a high-resolution grid.
         annotate : bool, optional
             Flag whether to label the four retinal quadrants
         autoscale : bool, optional
@@ -676,10 +761,14 @@ class AxonMapSpatial(SpatialModel):
         ax : matplotlib.axes._subplots.AxesSubplot, optional
             A Matplotlib axes object. If None, will either use the current axes
             (if exists) or create a new Axes object
+        figsize : (float, float), optional
+            Desired (width, height) of the figure in inches
 
         """
         if ax is None:
             ax = plt.gca()
+        if figsize is not None:
+            ax.figure.set_size_inches(figsize)
         ax.set_facecolor('white')
         ax.set_aspect('equal')
 
@@ -692,23 +781,36 @@ class AxonMapSpatial(SpatialModel):
         if use_dva:
             # Use degrees of visual angle (dva) as axis unit:
             units = 'degrees of visual angle'
-            xmin, xmax, ymin, ymax = -18, 18, -18, 18
+            # Make sure we're filling the simulated area, rounded up/down,
+            # but no smaller than (-18, 18):
+            xmin = min(np.floor(self.xrange[0] / 3) * 3, -18)
+            xmax = max(np.ceil(self.xrange[1] / 3) * 3, 18)
+            ymin = min(np.floor(self.yrange[0] / 3) * 3, -18)
+            ymax = max(np.ceil(self.yrange[1] / 3) * 3, 18)
             od_xy = self.loc_od
             od_w = 6.44
             od_h = 6.85
             grid_transform = None
             # Flip y upside down for dva:
-            axon_bundles = [self.ret2dva(bundle) * [1, -1]
+            axon_bundles = [np.array(self.retinotopy.ret2dva(bundle[:, 0],
+                                                             -bundle[:, 1])).T
                             for bundle in axon_bundles]
             labels = ['upper', 'lower', 'left', 'right']
         else:
             # Use retinal coordinates (microns) as axis unit.
             units = 'microns'
-            xmin, xmax, ymin, ymax = -5000, 5000, -5000, 5000
-            od_xy = self.dva2ret(self.loc_od)
+            # Make sure we're filling the simulated area, rounded up/down,
+            # but no smaller than (-5000, 5000):
+            xmin, ymin = self.retinotopy.dva2ret(self.xrange[0], self.yrange[0])
+            xmin = min(np.floor(xmin / 1000) * 1000, -5000)
+            ymin = min(np.floor(ymin / 1000) * 1000, -5000)
+            xmax, ymax = self.retinotopy.dva2ret(self.xrange[1], self.yrange[1])
+            xmax = max(np.ceil(xmax / 1000) * 1000, 5000)
+            ymax = max(np.ceil(ymax / 1000) * 1000, 5000)
+            od_xy = self.retinotopy.dva2ret(*self.loc_od)
             od_w = 1770
             od_h = 1880
-            grid_transform = self.dva2ret
+            grid_transform = self.retinotopy.dva2ret
             if self.eye == 'RE':
                 labels = ['superior', 'inferior', 'temporal', 'nasal']
             else:
@@ -729,10 +831,10 @@ class AxonMapSpatial(SpatialModel):
                              color='white', zorder=ZORDER['background'] + 1))
         # Show extent of simulated grid:
         if self.is_built:
-            self.grid.plot(ax=ax, transform=grid_transform,
+            self.grid.plot(ax=ax, transform=grid_transform, style=style,
                            zorder=ZORDER['background'] + 2)
-        ax.set_xlabel('x (%s)' % units)
-        ax.set_ylabel('y (%s)' % units)
+        ax.set_xlabel(f'x ({units})')
+        ax.set_ylabel(f'y ({units})')
         if autoscale:
             ax.axis((xmin, xmax, ymin, ymax))
         if annotate:
@@ -767,51 +869,78 @@ class AxonMapModel(Model):
 
     Parameters
     ----------
-    axlambda: double, optional
+    axlambda : double, optional
         Exponential decay constant along the axon(microns).
-    rho: double, optional
+    rho : double, optional
         Exponential decay constant away from the axon(microns).
-    eye: {'RE', LE'}, optional
+    eye : {'RE', LE'}, optional
         Eye for which to generate the axon map.
     xrange : (x_min, x_max), optional
         A tuple indicating the range of x values to simulate (in degrees of
         visual angle). In a right eye, negative x values correspond to the
         temporal retina, and positive x values to the nasal retina. In a left
         eye, the opposite is true.
-    yrange : tuple, (y_min, y_max)
+    yrange : (y_min, y_max), optional
         A tuple indicating the range of y values to simulate (in degrees of
         visual angle). Negative y values correspond to the superior retina,
         and positive y values to the inferior retina.
-    xystep : int, double, tuple
+    xystep : int or double or tuple, optional
         Step size for the range of (x,y) values to simulate (in degrees of
         visual angle). For example, to create a grid with x values [0, 0.5, 1]
-        use ``x_range=(0, 1)`` and ``xystep=0.5``.
-    grid_type : {'rectangular', 'hexagonal'}
+        use ``xrange=(0, 1)`` and ``xystep=0.5``.
+    grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
-    loc_od, loc_od: (x,y), optional
+    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+        object that provides ``ret2dva`` and ``dva2ret`` methods.
+        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        used.
+    n_gray : int, optional
+        The number of gray levels to use. If an integer is given, k-means
+        clustering is used to compress the color space of the percept into
+        ``n_gray`` bins. If None, no compression is performed.
+    noise : float or int, optional
+        Adds salt-and-pepper noise to each percept frame. An integer will be
+        interpreted as the number of pixels to subject to noise in each frame.
+        A float between 0 and 1 will be interpreted as a ratio of pixels to
+        subject to noise in each frame.
+    loc_od, loc_od : (x,y), optional
         Location of the optic disc in degrees of visual angle. Note that the
         optic disc in a left eye will be corrected to have a negative x
         coordinate.
-    n_axons: int, optional
+    n_axons : int, optional
         Number of axons to generate.
-    axons_range: (min, max), optional
+    axons_range : (min, max), optional
         The range of angles(in degrees) at which axons exit the optic disc.
         This corresponds to the range of $\\phi_0$ values used in
         [Jansonius2009]_.
-    n_ax_segments: int, optional
+    n_ax_segments : int, optional
         Number of segments an axon is made of.
-    ax_segments_range: (min, max), optional
+    ax_segments_range : (min, max), optional
         Lower and upper bounds for the radial position values(polar coords)
         for each axon.
-    min_ax_sensitivity: float, optional
+    min_ax_sensitivity : float, optional
         Axon segments whose contribution to brightness is smaller than this
         value will be pruned to improve computational efficiency. Set to a
-        value between 0 and 1.
-    axon_pickle: str, optional
+        value between 0 and 1. If engine is jax, all other axons will be padded
+        to the length enforced by this constraint.
+    engine : string, optional
+        Engine to use for computation. Options are 'serial', 'cython', and 'jax'.
+        Defaults to 'cython'
+    axon_pickle : str, optional
         File name in which to store precomputed axon maps.
-    ignore_pickle: bool, optional
+    ignore_pickle : bool, optional
         A flag whether to ignore the pickle file in future calls to
         ``model.build()``.
+    n_threads : int, optional
+        Number of CPU threads to use during parallelization using OpenMP. 
+        Defaults to max number of user CPU cores.
+
+    .. important ::
+
+        If you change important model parameters outside the constructor (e.g.,
+        by directly setting ``model.axlambda = 100``), you will have to call
+        ``model.build()`` again for your changes to take effect.
 
     Notes
     -----
@@ -821,14 +950,14 @@ class AxonMapModel(Model):
 
     def __init__(self, **params):
         super(AxonMapModel, self).__init__(spatial=AxonMapSpatial(),
-                                           temporal=None, **params)
+                                           temporal=None,
+                                           **params)
 
     def predict_percept(self, implant, t_percept=None):
         # Need to add an additional check before running the base method:
         if isinstance(implant, ProsthesisSystem):
             if implant.eye != self.spatial.eye:
-                raise ValueError(("The implant is in %s but the model was "
-                                  "built for %s.") % (implant.eye,
-                                                      self.spatial.eye))
+                raise ValueError(f"The implant is in {implant.eye} but the model was "
+                                 f"built for {self.spatial.eye}.")
         return super(AxonMapModel, self).predict_percept(implant,
                                                          t_percept=t_percept)

@@ -21,7 +21,7 @@ class FadingTemporal(TemporalModel):
     *  Cathodic currents (negative amplitudes) will increase perceived
        brightness
     *  Anodic currents (positive amplitudes) will decrease brightness
-    *  Brightness is bounded in :math:`[\\theta, \\infinity[`, where 
+    *  Brightness is bounded in :math:`[\\theta, \\infty]`, where
        :math:`\\theta` (``thresh_percept``) is a nonnegative scalar
 
     Parameters
@@ -35,8 +35,10 @@ class FadingTemporal(TemporalModel):
         :math:`\\ln(2) \\tau` milliseconds.
     thresh_percept: float, optional
         Below threshold, the percept has brightness zero.
+    n_threads: int, optional
+            Number of CPU threads to use during parallelization using OpenMP. Defaults to max number of user CPU cores.
 
-    .. versionadded: 0.7.1
+    .. versionadded:: 0.7.1
 
     """
 
@@ -44,7 +46,7 @@ class FadingTemporal(TemporalModel):
         base_params = super(FadingTemporal, self).get_default_params()
         params = {
             # Time constant for the exponential decay:
-            'tau': 0.01,
+            'tau': 100,
         }
         # This is subtle: Rather than calling `params.update(base_params)`, we
         # call `base_params.update(params)`. This will overwrite `base_params`
@@ -67,9 +69,9 @@ class FadingTemporal(TemporalModel):
         # np.uint32, so we need to np.round it first:
         idx_percept = np.uint32(np.round(t_percept / self.dt))
         if np.unique(idx_percept).size < t_percept.size:
-            raise ValueError("All times 't_percept' must be distinct multiples "
-                             "of `dt`=%.2e" % self.dt)
+            raise ValueError(f"All times 't_percept' must be distinct multiples "
+                             f"of `dt`={self.dt:.2e}")
         # Cython returns a 2D (space x time) NumPy array:
         return fading_fast(stim_data.astype(np.float32),
                            stim.time.astype(np.float32),
-                           idx_percept, self.dt, self.tau, self.thresh_percept)
+                           idx_percept, self.dt, self.tau, self.thresh_percept, self.n_threads)

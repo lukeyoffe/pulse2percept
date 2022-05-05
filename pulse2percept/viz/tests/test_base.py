@@ -1,10 +1,11 @@
+from pulse2percept.viz import scatter_correlation, correlation_matrix
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
 import numpy.testing as npt
-import matplotlib.pyplot as plt
-
-from pulse2percept.viz import scatter_correlation, correlation_matrix
+import matplotlib
+matplotlib.use('Agg')
 
 
 def test_scatter_correlation():
@@ -12,7 +13,6 @@ def test_scatter_correlation():
     _, ax = plt.subplots()
     ax = scatter_correlation(x, x, ax=ax)
     npt.assert_equal(len(ax.texts), 1)
-    print(ax.texts)
     npt.assert_equal('$r$=1.000' in ax.texts[0].get_text(), True)
     # Ignore NaN:
     ax = scatter_correlation([0, 1, np.nan, 3], [0, 1, 2, 3])

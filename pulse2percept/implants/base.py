@@ -1,11 +1,15 @@
 """`ProsthesisSystem`"""
 import numpy as np
 from copy import deepcopy
+from functools import reduce
+from scipy.spatial import cKDTree
+from skimage.transform import SimilarityTransform
 
 from .electrodes import Electrode
 from .electrode_arrays import ElectrodeArray
 from ..stimuli import Stimulus, ImageStimulus, VideoStimulus
-from ..utils import PrettyPrint
+from ..utils import PrettyPrint, Grid2D
+from ..utils._fast_math import c_gcd
 
 
 class ProsthesisSystem(PrettyPrint):
@@ -84,26 +88,6 @@ class ProsthesisSystem(PrettyPrint):
         The user can define their own checks in implants that inherit from
         :py:class:`~pulse2percept.implants.ProsthesisSystem`.
 
-        Parameters
-        ----------
-        stim : :py:class:`~pulse2percept.stimuli.Stimulus` source type
-            A valid source type for the
-            :py:class:`~pulse2percept.stimuli.Stimulus` object (e.g., scalar,
-            NumPy array, pulse train).
-        """
-        if self.safe_mode:
-            self._require_charge_balanced(stim)
-
-    def preprocess_stim(self, stim):
-        """Preprocess the stimulus
-
-        This methods is executed every time a new value is assigned to ``stim``.
-
-        No preprocessing is performed by default, but the user can define their
-        own method in implants that inherit from
-        return stim
-        :py:class:`~pulse2percept.implants.ProsthesisSystem`.
-
         A custom method must return a 
         :py:class:`~pulse2percept.stimuli.Stimulus` object with the correct
         number of electrodes for the implant.
@@ -119,6 +103,79 @@ class ProsthesisSystem(PrettyPrint):
         ----------
         stim_out : :py:class:`~pulse2percept.stimuli.Stimulus` object
         """
+        if self.safe_mode:
+            self._require_charge_balanced(stim)
+
+    def preprocess_stim(self, stim):
+        """Preprocess the stimulus
+
+        This methods is executed every time a new value is assigned to ``stim``.
+
+        No preprocessing is performed by default, but the user can define their
+        own method in implants that inherit from
+        return stim
+        :py:class:`~pulse2percept.implants.ProsthesisSystem`.
+
+        A custom method must return a
+        :py:class:`~pulse2percept.stimuli.Stimulus` object with the correct
+        number of electrodes for the implant.
+
+        Parameters
+        ----------
+        stim : :py:class:`~pulse2percept.stimuli.Stimulus` source type
+            A valid source type for the
+            :py:class:`~pulse2percept.stimuli.Stimulus` object (e.g., scalar,
+            NumPy array, pulse train).
+
+        Returns
+        ----------
+        stim_out : :py:class:`~pulse2percept.stimuli.Stimulus` object
+        """
+        return stim
+
+    def reshape_stim(self, stim):
+        if isinstance(stim, (ImageStimulus, VideoStimulus)):
+            # In the more general case, the implant might not have a 'shape'
+            # attribute or have a hex grid. Idea:
+            # - Fit electrode locations to a rectangular grid
+            # - Downscale the image to that grid size
+            # - Index into grid to determine electrode activation
+            data = stim.rgb2gray()
+            if hasattr(self.earray, 'rot'):
+                # We need to rotate the array & image first, otherwise we may
+                # end up with an infinitesimally small (dx,dy); for example,
+                # when a rectangular grid is rotated by 1deg:
+                tf = SimilarityTransform(rotation=np.deg2rad(self.earray.rot))
+                x, y = np.array([tf.inverse([e.x, e.y])
+                                 for e in self.electrode_objects]).squeeze().T
+                data = data.rotate(self.earray.rot)
+            else:
+                x = [e.x for e in self.electrode_objects]
+                y = [e.y for e in self.electrode_objects]
+            # Determine grid step by finding the greatest common denominator:
+            dx = abs(reduce(lambda a, b: c_gcd(a, b), np.diff(x)))
+            dy = abs(reduce(lambda a, b: c_gcd(a, b), np.diff(y)))
+            # Build a new rectangular grid:
+            try:
+                grid = Grid2D((np.min(x), np.max(x)), (np.min(y), np.max(y)),
+                              step=(dx, dy))
+            except MemoryError:
+                raise ValueError("Automatic stimulus reshaping failed. You "
+                                 "will need to resize the stimulus yourself "
+                                 "so that there is one activation value per "
+                                 "electrode.")
+            # For each electrode, find the closest pixel on the grid:
+            kdtree = cKDTree(np.vstack((grid.x.ravel(), grid.y.ravel())).T)
+            _, e_idx = kdtree.query(np.vstack((x, y)).T)
+            data = data.resize(grid.x.shape).data[e_idx, ...].squeeze()
+            # Sample the stimulus at the correct pixel locations:
+            return Stimulus(data, electrodes=self.electrode_names,
+                            time=stim.time, metadata=stim.metadata)
+        else:
+            err_str = (f"Number of electrodes in the stimulus ({len(stim.electrodes)}) "
+                       f"does not match the number of electrodes in "
+                       f"the implant ({self.n_electrodes}).")
+            raise ValueError(err_str)
         return stim
 
     def plot(self, annotate=False, autoscale=True, ax=None):
@@ -146,6 +203,8 @@ class ProsthesisSystem(PrettyPrint):
 
     def deactivate(self, electrodes):
         self.earray.deactivate(electrodes)
+        if self.stim is not None:
+            self.stim.remove(electrodes)
 
     @property
     def earray(self):
@@ -162,8 +221,8 @@ class ProsthesisSystem(PrettyPrint):
             # For convenience, build an array from a single electrode:
             earray = ElectrodeArray(earray)
         if not isinstance(earray, ElectrodeArray):
-            raise TypeError("'earray' must be an ElectrodeArray object, not "
-                            "%s." % type(earray))
+            raise TypeError(f"'earray' must be an ElectrodeArray object, not "
+                            f"{type(earray)}.")
         self._earray = earray
 
     @property
@@ -222,26 +281,21 @@ class ProsthesisSystem(PrettyPrint):
                 # Use electrode names as stimulus coordinates:
                 stim = Stimulus(data, electrodes=self.electrode_names)
 
+            # If the stim is larger than the number of electrodes, most commonly
+            # we're dealing with an image or video stim. In this case, we might
+            # want to try and reshape the stimulus to fit the array:
             if len(stim.electrodes) > self.n_electrodes:
-                if (isinstance(stim, (ImageStimulus, VideoStimulus)) and
-                        hasattr(self.earray, 'shape')):
-                    # Convenience function for electrode grids:
-                    stim = stim.rgb2gray().resize(self.earray.shape)
-                else:
-                    err_str = ("Number of electrodes in the stimulus (%d) "
-                               "does not match the number of electrodes in "
-                               "the implant (%d)." % (len(stim.electrodes),
-                                                      self.n_electrodes))
-                    raise ValueError(err_str)
+                stim = self.reshape_stim(stim)
+
             # Make sure all electrode names are valid:
             for electrode in stim.electrodes:
                 # Invalid index will return None:
                 if not self.earray[electrode]:
-                    raise ValueError('Electrode "%s" not found in '
-                                     'implant.' % electrode)
-                if not self.earray[electrode].activated:
-                    raise ValueError('Cannot assign stimulus to deactivated '
-                                     'Electrode "%s".' % electrode)
+                    raise ValueError(f'Electrode "{electrode}" not found in '
+                                     f'implant.')
+            # Remove deactivated electrodes from the stimulus:
+            stim.remove([name for (name, e) in self.electrodes.items()
+                         if not e.activated])
             # Perform safety checks, etc.:
             self.check_stim(stim)
             # Store stimulus:
@@ -270,11 +324,11 @@ class ProsthesisSystem(PrettyPrint):
     def eye(self, eye):
         """Eye setter (called upon `self.eye = eye`)"""
         if not isinstance(eye, str):
-            raise TypeError("'eye' must be a string, not %s." % type(eye))
+            raise TypeError(f"'eye' must be a string, not {type(eye)}.")
         eye = eye.upper()
         if eye != 'LE' and eye != 'RE':
-            raise ValueError("'eye' must be either 'LE' or 'RE', not "
-                             "%s." % eye)
+            raise ValueError(f"'eye' must be either 'LE' or 'RE', not "
+                             f"{eye}.")
         self._eye = eye
 
     @property

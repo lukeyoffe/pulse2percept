@@ -12,7 +12,7 @@ from pkg_resources import resource_filename
 
 from ..implants import ArgusI, ArgusII
 from ..models import AxonMapModel
-from ..utils import Watson2014Transform, scale_image, center_image
+from ..utils import Watson2014Map, scale_image, center_image
 from ..utils.constants import ZORDER
 
 PATH_ARGUS1 = resource_filename('pulse2percept', 'viz/data/argus1.png')
@@ -87,22 +87,22 @@ def plot_argus_phosphenes(data, argus, scale=1.0, axon_map=None,
         Matplotlib axis
     """
     if not isinstance(data, pd.DataFrame):
-        raise TypeError('"data" must be a Pandas DataFrame, not '
-                        '%s.' % type(data))
+        raise TypeError(f'"data" must be a Pandas DataFrame, not '
+                        f'{type(data)}.')
     req_cols = ['subject', 'electrode', 'image', 'xrange', 'yrange']
     if not all(col in data.columns for col in req_cols):
-        raise ValueError('"data" must have columns %s.' % req_cols)
+        raise ValueError(f'"data" must have columns {req_cols}.')
     if len(data) == 0:
         raise ValueError('"data" is empty.')
     if len(data.subject.unique()) > 1:
         raise ValueError('"data" cannot contain data from more than one '
                          'subject.')
     if not isinstance(argus, (ArgusI, ArgusII)):
-        raise TypeError('"argus" must be an Argus I or Argus II implant, not '
-                        '%s.' % type(argus))
+        raise TypeError(f'"argus" must be an Argus I or Argus II implant, not '
+                        f'{type(argus)}.')
     if axon_map is not None and not isinstance(axon_map, AxonMapModel):
-        raise TypeError('"axon_map" must be an AxonMapModel instance, not '
-                        '%s.' % type(axon_map))
+        raise TypeError(f'"axon_map" must be an AxonMapModel instance, not '
+                        f'{type(axon_map)}.')
     if ax is None:
         ax = plt.gca()
     alpha_bg = 0.5  # alpha value for the array in the background
@@ -125,10 +125,8 @@ def plot_argus_phosphenes(data, argus, scale=1.0, axon_map=None,
     pad = 2000  # microns
     x_el = [e.x for e in argus.electrode_objects]
     y_el = [e.y for e in argus.electrode_objects]
-    x_min = Watson2014Transform.ret2dva(np.min(x_el) - pad)
-    x_max = Watson2014Transform.ret2dva(np.max(x_el) + pad)
-    y_min = Watson2014Transform.ret2dva(np.min(y_el) - pad)
-    y_max = Watson2014Transform.ret2dva(np.max(y_el) + pad)
+    x_min, y_min = Watson2014Map.ret2dva(np.min(x_el) - pad, np.min(y_el) - pad)
+    x_max, y_max = Watson2014Map.ret2dva(np.max(x_el) + pad, np.max(y_el) + pad)
 
     # Coordinate transform from degrees of visual angle to output, and from
     # image coordinates to output image:
@@ -144,7 +142,7 @@ def plot_argus_phosphenes(data, argus, scale=1.0, axon_map=None,
         except IndexError:
             out_shape = (768, 1024)
     for xy, e in zip(px_argus, argus.electrode_objects):
-        x_dva, y_dva = Watson2014Transform.ret2dva([e.x, e.y])
+        x_dva, y_dva = Watson2014Map.ret2dva(e.x, e.y)
         x_out = (x_dva - x_min) / (x_max - x_min) * (out_shape[1] - 1)
         y_out = (y_dva - y_min) / (y_max - y_min) * (out_shape[0] - 1)
         pts_in.append(xy)
@@ -157,8 +155,8 @@ def plot_argus_phosphenes(data, argus, scale=1.0, axon_map=None,
     argus2out = img_transform('similarity', pts_in, pts_out)
 
     # Top left, top right, bottom left, bottom right corners:
-    x_range = data.xrange
-    y_range = data.yrange
+    x_range = data.xrange.values[0]
+    y_range = data.yrange.values[0]
     pts_dva = [[x_range[0], y_range[0]], [x_range[0], y_range[1]],
                [x_range[1], y_range[0]], [x_range[1], y_range[1]]]
 
@@ -166,8 +164,8 @@ def plot_argus_phosphenes(data, argus, scale=1.0, axon_map=None,
     all_imgs = np.zeros(out_shape)
     num_imgs = data.groupby('electrode')['image'].count()
     for _, row in data.iterrows():
-        e_pos = Watson2014Transform.ret2dva((argus[row['electrode']].x,
-                                             argus[row['electrode']].y))
+        e_pos = Watson2014Map.ret2dva(argus[row['electrode']].x,
+                                      argus[row['electrode']].y)
         align_center = dva2out(e_pos)[0]
         img_drawing = scale_image(row['image'], scale)
         img_drawing = center_image(img_drawing, loc=align_center)
@@ -200,7 +198,8 @@ def plot_argus_phosphenes(data, argus, scale=1.0, axon_map=None,
         # Draw axon pathways:
         for bundle in axon_bundles:
             # Flip y upside down for dva:
-            bundle = Watson2014Transform.ret2dva(bundle) * [1, -1]
+            bundle = Watson2014Map.ret2dva(bundle[:, 0], -bundle[:, 1])
+            bundle = np.array(bundle).T
             # Set segments outside the drawing window to NaN:
             x_idx = np.logical_or(bundle[:, 0] < x_min, bundle[:, 0] > x_max)
             bundle[x_idx, 0] = np.nan

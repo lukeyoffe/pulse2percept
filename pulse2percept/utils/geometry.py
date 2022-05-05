@@ -1,16 +1,18 @@
 """
-`Grid2D`, `RetinalCoordTransform`, `Curcio1990Transform`,
-`Watson2014Transform`, `Watson2014DisplaceTransform`, `cart2pol`, `pol2cart`, 'delta_angle'
+`Grid2D`, `VisualFieldMap`, `Curcio1990Map`, `Watson2014Map`,
+`Watson2014DisplaceMap`, `cart2pol`, `pol2cart`, `delta_angle`
 
 """
 import numpy as np
 from abc import ABCMeta, abstractmethod
 import scipy.stats as spst
+from scipy.spatial import ConvexHull
 # Using or importing the ABCs from 'collections' instead of from
 # 'collections.abc' is deprecated, and in 3.8 it will stop working:
 from collections.abc import Sequence
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
+from matplotlib.collections import PatchCollection
 
 from .base import PrettyPrint
 from .constants import ZORDER
@@ -68,7 +70,7 @@ class Grid2D(PrettyPrint):
         elif grid_type == 'hexagonal':
             self._make_hexagonal_grid(x_range, y_range, step)
         else:
-            raise ValueError("Unknown grid type '%s'." % grid_type)
+            raise ValueError(f"Unknown grid type '{grid_type}'.")
 
     def _pprint_params(self):
         """Return dictionary of class arguments to pretty-print"""
@@ -79,18 +81,18 @@ class Grid2D(PrettyPrint):
     def _make_rectangular_grid(self, x_range, y_range, step):
         """Creates a rectangular grid"""
         if not isinstance(x_range, (tuple, list, np.ndarray)):
-            raise TypeError(("x_range must be a tuple, list or NumPy array, "
-                             "not %s.") % type(x_range))
+            raise TypeError((f"x_range must be a tuple, list or NumPy array, "
+                             f"not {type(x_range)}."))
         if not isinstance(y_range, (tuple, list, np.ndarray)):
-            raise TypeError(("y_range must be a tuple, list or NumPy array, "
-                             "not %s.") % type(y_range))
+            raise TypeError((f"y_range must be a tuple, list or NumPy array, "
+                             f"not {type(y_range)}."))
         if len(x_range) != 2 or len(y_range) != 2:
             raise ValueError("x_range and y_range must have 2 elements.")
         if isinstance(step, (tuple, list, np.ndarray)):
             if len(step) != 2:
-                raise ValueError("If 'step' is a tuple, it must provide "
-                                 "two values (x_step, y_step), not "
-                                 "%d." % len(step))
+                raise ValueError(f"If 'step' is a tuple, it must provide "
+                                 f"two values (x_step, y_step), not "
+                                 f"{len(step)}.")
             x_step = step[0]
             y_step = step[1]
         else:
@@ -126,14 +128,26 @@ class Grid2D(PrettyPrint):
     def reset(self):
         self._iter = 0
 
-    def plot(self, transform=None, autoscale=True, zorder=None, ax=None):
+    def plot(self, transform=None, label=None, style='hull', autoscale=True,
+             zorder=None, ax=None, figsize=None, fc='gray'):
         """Plot the extension of the grid
 
         Parameters
         ----------
         transform : function, optional
             A coordinate transform to be applied to the (x,y) coordinates of
-            the grid (e.g., :py:meth:`Curcio1990Transform.dva2ret`)
+            the grid (e.g., :py:meth:`Curcio1990Transform.dva2ret`). It must
+            accept two input arguments (x and y) and output two variables (the
+            transformed x and y).
+        label : str, optional
+            A name to be used as the label of the matplotlib plot. This can be used
+            to label plots with multiple regions (i.e. call plt.legend after)
+        style : {'hull', 'scatter', 'cell'}, optional
+            * 'hull': Show the convex hull of the grid (that is, the outline of
+              the smallest convex set that contains all grid points).
+            * 'scatter': Scatter plot all grid points
+            * 'cell': Show the outline of each grid cell as a polygon. Note that
+              this can be costly for a high-resolution grid.
         autoscale : bool, optional
             Whether to adjust the x,y limits of the plot to fit the implant
         zorder : int, optional
@@ -141,9 +155,19 @@ class Grid2D(PrettyPrint):
         ax : matplotlib.axes._subplots.AxesSubplot, optional
             A Matplotlib axes object. If None, will either use the current axes
             (if exists) or create a new Axes object
+        figsize : (float, float), optional
+            Desired (width, height) of the figure in inches
+        fc : str or valid matplotlib color, optional
+            Facecolor, or edge color if style=scatter, of the plotted region
+            Defaults to gray
         """
+        if style.lower() not in ['hull', 'scatter', 'cell']:
+            raise ValueError(f'Unknown plotting style "{style}". Choose from: '
+                             f'"hull", "scatter", "cell"')
         if ax is None:
             ax = plt.gca()
+        if figsize is not None:
+            ax.figure.set_size_inches(figsize)
         ax.set_aspect('equal')
         if autoscale:
             ax.autoscale(True)
@@ -151,77 +175,117 @@ class Grid2D(PrettyPrint):
             zorder = ZORDER['background']
 
         x, y = self.x, self.y
-        if transform is not None:
-            x, y = transform(self.x), transform(self.y)
+        try:
+            # Step might be a tuple:
+            x_step, y_step = self.step
+        except TypeError:
+            x_step = self.step
+            y_step = self.step
 
-        if self.type == 'rectangular':
-            xy = []
-            for array in (x, y):
-                border = []
-                # Top row (left to right), not the last element:
-                border += list(array[0, :-1])
-                # Right column (top to bottom), not the last element:
-                border += list(array[:-1, -1])
-                # Bottom row (right to left), not the last element:
-                border += list(array[-1, :0:-1])
-                # Left column (bottom to top), all elements element:
-                border += list(array[::-1, 0])
-                xy.append(border)
-            # Draw border:
-            ax.add_patch(Polygon(np.array(xy).T, alpha=0.3, ec='k', fc='gray',
-                                 ls='--', zorder=zorder))
-            # This is needed in MPL 3.0.X to set the axis limit correctly:
-            ax.autoscale_view()
+        if style.lower() == 'cell':
+            # Show a polygon for every grid cell that we are simulating:
+            if self.type == 'hexagonal':
+                raise NotImplementedError
+            patches = []
+            for xret, yret in zip(x.ravel(), y.ravel()):
+                # Outlines of the cell are given by (x,y) and the step size:
+                vertices = np.array([
+                    [xret - x_step / 2, yret - y_step / 2],
+                    [xret - x_step / 2, yret + y_step / 2],
+                    [xret + x_step / 2, yret + y_step / 2],
+                    [xret + x_step / 2, yret - y_step / 2],
+                ])
+                if transform is not None:
+                    vertices = np.array(transform(*vertices.T)).T
+                patches.append(Polygon(vertices, alpha=0.3, ec='k', fc=fc,
+                                       ls='--', zorder=zorder))
+            ax.add_collection(PatchCollection(patches, match_original=True,
+                                              zorder=zorder, label=label))
         else:
-            raise NotImplementedError
+            # Show either the convex hull or a scatter plot:
+            if transform is not None:
+                x, y = transform(self.x, self.y)
+            points = np.vstack((x.ravel(), y.ravel()))
+            # Remove NaN values from the grid:
+            points = points[:, ~np.logical_or(*np.isnan(points))]
+            if style.lower() == 'hull':
+                hull = ConvexHull(points.T)
+                ax.add_patch(Polygon(points[:, hull.vertices].T, alpha=0.3, ec='k',
+                                     fc=fc, ls='--', zorder=zorder, label=label))
+            elif style.lower() == 'scatter':
+                ax.scatter(*points, alpha=0.3, ec=fc, color=fc, marker='+',
+                           zorder=zorder, label=label)
+        # This is needed in MPL 3.0.X to set the axis limit correctly:
+        ax.autoscale_view()
         return ax
 
 
-class RetinalCoordTransform(object, metaclass=ABCMeta):
-    """Base class for a retinal coordinate transform
+class VisualFieldMap(object, metaclass=ABCMeta):
+    """Base class for a visual field map (retinotopy)
 
     A template
 
     """
 
     @abstractmethod
-    def dva2ret(self):
+    def dva2ret(self, x, y):
         """Convert degrees of visual angle (dva) to retinal coords (um)"""
         raise NotImplementedError
 
     @abstractmethod
-    def ret2dva(self):
+    def ret2dva(self, x, y):
         """Convert retinal coords (um) to degrees of visual angle (dva)"""
         raise NotImplementedError
 
 
-class Curcio1990Transform(RetinalCoordTransform):
+class Curcio1990Map(VisualFieldMap):
     """Converts between visual angle and retinal eccentricity [Curcio1990]_"""
 
     @staticmethod
-    def dva2ret(xdva):
+    def dva2ret(xdva, ydva):
         """Convert degrees of visual angle (dva) to retinal eccentricity (um)
 
         Assumes that one degree of visual angle is equal to 280 um on the
         retina [Curcio1990]_.
         """
-        return 280.0 * xdva
+        return 280.0 * xdva, 280.0 * ydva
 
     @staticmethod
-    def ret2dva(xret):
+    def ret2dva(xret, yret):
         """Convert retinal eccentricity (um) to degrees of visual angle (dva)
 
         Assumes that one degree of visual angle is equal to 280 um on the
         retina [Curcio1990]_
         """
-        return xret / 280.0
+        return xret / 280.0, yret / 280.0
+
+    def __eq__(self, other):
+        """
+        Equality operator for Curcio1990Map.
+        Compares two Curcio1990Map's based attribute equality
+
+        Parameters
+        ----------
+        other: SpatialModel
+            SpatialModel to compare with
+
+        Returns
+        -------
+        bool:
+            True if the compared objects have identical attributes, False otherwise.
+        """
+        if not isinstance(other, Curcio1990Map):
+            return False
+        if id(self) == id(other):
+            return True
+        return self.__dict__ == other.__dict__
 
 
-class Watson2014Transform(RetinalCoordTransform):
+class Watson2014Map(VisualFieldMap):
     """Converts between visual angle and retinal eccentricity [Watson2014]_"""
 
     @staticmethod
-    def ret2dva(r_um):
+    def ret2dva(x_um, y_um, coords='cart'):
         """Converts retinal distances (um) to visual angles (deg)
 
         This function converts an eccentricity measurement on the retinal
@@ -230,22 +294,30 @@ class Watson2014Transform(RetinalCoordTransform):
 
         Parameters
         ----------
-        r_um : double or array-like
-            Eccentricity in microns
+        x_um, y_um : double or array-like
+            Original x and y coordinates on the retina (microns)
+        coords : {'cart', 'polar'}
+            Whether to return the result in Cartesian or polar coordinates
 
         Returns
         -------
-        r_dva : double or array-like
-            Eccentricity in degrees of visual angle (dva)
+        x_dva, y_dva : double or array-like
+            Transformed x and y coordinates (degrees of visual angle, dva)
         """
+        phi_um, r_um = cart2pol(x_um, y_um)
         sign = np.sign(r_um)
         r_mm = 1e-3 * np.abs(r_um)
         r_deg = 3.556 * r_mm + 0.05993 * r_mm ** 2 - 0.007358 * r_mm ** 3
         r_deg += 3.027e-4 * r_mm ** 4
-        return sign * r_deg
+        r_deg *= sign
+        if coords.lower() == 'cart':
+            return pol2cart(phi_um, r_deg)
+        elif coords.lower() == 'polar':
+            return phi_um, r_deg
+        raise ValueError(f'Unknown coordinate system "{coords}".')
 
     @staticmethod
-    def dva2ret(r_deg):
+    def dva2ret(x_deg, y_deg, coords='cart'):
         """Converts visual angles (deg) into retinal distances (um)
 
         This function converts degrees of visual angle into a retinal distance 
@@ -253,24 +325,51 @@ class Watson2014Transform(RetinalCoordTransform):
 
         Parameters
         ----------
-        r_dva : double or array-like
-            Eccentricity in degrees of visual angle (dva)
+        x_dva, y_dva : double or array-like
+            Original x and y coordinates (degrees of visual angle, dva)
+        coords : {'cart', 'polar'}
+            Whether to return the result in Cartesian or polar coordinates
 
         Returns
         -------
-        r_um : double or array-like
-            Eccentricity in microns
-
+        x_ret, y_ret : double or array-like
+            Transformed x and y coordinates on the retina (microns)
 
         """
+        phi_deg, r_deg = cart2pol(x_deg, y_deg)
         sign = np.sign(r_deg)
         r_deg = np.abs(r_deg)
         r_mm = 0.268 * r_deg + 3.427e-4 * r_deg ** 2 - 8.3309e-6 * r_deg ** 3
-        r_um = 1e3 * r_mm
-        return sign * r_um
+        r_um = 1e3 * r_mm * sign
+        if coords.lower() == 'cart':
+            return pol2cart(phi_deg, r_um)
+        elif coords.lower() == 'polar':
+            return phi_deg, r_um
+        raise ValueError(f'Unknown coordinate system "{coords}".')
+
+    def __eq__(self, other):
+        """
+        Equality operator for Watson2014 Object.
+        Compares two Watson2014 Objects based attribute equality
+
+        Parameters
+        ----------
+        other: Watson2014Map
+            Watson2014 Object to compare against
+
+        Returns
+        -------
+        bool:
+            True if the compared objects have identical attributes, False otherwise.
+        """
+        if not isinstance(other, Watson2014Map):
+            return False
+        if id(self) == id(other):
+            return True
+        return self.__dict__ == other.__dict__
 
 
-class Watson2014DisplaceTransform(RetinalCoordTransform):
+class Watson2014DisplaceMap(Watson2014Map):
     """Converts between visual angle and retinal eccentricity using RGC
        displacement [Watson2014]_
 
@@ -335,31 +434,50 @@ class Watson2014DisplaceTransform(RetinalCoordTransform):
         xret, yret : double or array-like
             Corresponding x,y coordinates in microns
         """
-        if self.eye == 'LE':
-            raise NotImplementedError
         # Convert x, y (dva) into polar coordinates:
-        theta, rho_dva = utils.cart2pol(xdva, ydva)
+        theta, rho_dva = cart2pol(xdva, ydva)
         # Add RGC displacement:
         meridian = np.where(xdva < 0, 'temporal', 'nasal')
         rho_dva += self.watson_displacement(rho_dva, meridian=meridian)
         # Convert back to x, y (dva):
-        x, y = utils.pol2cart(theta, rho_dva)
-        # Convert to retinal coords:
-        return dva2ret(x), dva2ret(y)
+        x, y = pol2cart(theta, rho_dva)
+        return super(Watson2014DisplaceMap, self).dva2ret(x, y)
 
     def ret2dva(self, xret, yret):
         raise NotImplementedError
 
 
 def cart2pol(x, y):
-    """Convert Cartesian to polar coordinates"""
+    """Convert Cartesian to polar coordinates
+
+    Parameters
+    ----------
+    x, y : scalar or array-like
+        The x,y Cartesian coordinates
+
+    Returns
+    -------
+    theta, rho : scalar or array-like
+        The transformed polar coordinates
+    """
     theta = np.arctan2(y, x)
     rho = np.hypot(x, y)
     return theta, rho
 
 
 def pol2cart(theta, rho):
-    """Convert polar to Cartesian coordinates"""
+    """Convert polar to Cartesian coordinates
+
+    Parameters
+    ----------
+    theta, rho : scalar or array-like
+        The polar coordinates
+
+    Returns
+    -------
+    x, y : scalar or array-like
+        The transformed Cartesian coordinates
+    """
     x = rho * np.cos(theta)
     y = rho * np.sin(theta)
     return x, y

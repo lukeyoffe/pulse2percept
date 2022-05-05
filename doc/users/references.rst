@@ -26,6 +26,16 @@ Studies referenced throughout the Documentation:
                 *Journal of Comparative Neurophysiology* 292:497-523,
                 doi:`10.1002/cne.902920402
                 <https://doi.org/10.1002/cne.902920402>`_.
+.. [Granley2021] Granley, J., & Beyeler, M. (2021). A Computational Model of 
+                 Phosphene Appearance for Epiretinal Prostheses. *International
+                 Conference of the IEEE Engineering in Medicine and Biology
+                 Society*.
+.. [Greenwald2009] Greenwald, S., Horsager A., Humayun M, Greenberg R.,
+                   McMahon M., Fine I. (2009).
+                   Brightness as a Function of Current Amplitude in Human
+                   Retinal Electrical Simulation. *Investigative Ophthalmology & Visual
+                   Science November 2009* Vol.50, 5017-5025, doi:`10.1167/iovs.08-2897
+                   <https://doi.org/10.1167/iovs.08-2897>`_.
 .. [Hayes2003] JS Hayes et al. (2003). Visually guided performance of
                simple tasks using simulated prosthetic vision.
                *Artificial Organs* 27, 1016-1028.
@@ -61,6 +71,17 @@ Studies referenced throughout the Documentation:
 .. [Palanker2020] D Palanker, Y LeMer, S Mohand-Said, M Muqit, JA Sahel (2020).
                   Photovoltaic restoration of central vision in atrophic
                   age-related macular degeneration. *Ophthalmology* 1-8
+.. [PerezFornos2012] A Perez Fornos, J Sommerhalder, L da Cruz, J Alain Sahel,
+                     S Mohand-Said, F Hafezi, M Pelizzone (2012). Temporal Properties of
+                     Visual Perception on Electrical Stimulation of the Retina.
+                     *Investigative Ophthalmology & Visual Science*, doi: `10.1167/iovs.11-9344
+                     <https://doi.org/10.1167/iovs.11-9344>`_.
+.. [Petoe2021] MA Petoe, SA Titchener, M Kolic, WG Kentler, CJ Abbott, DAX Nayagam, 
+               EK Baglin, J Kvansakul, N Barnes, JG Walker, SB Epp, KA Young, LN Ayton, 
+               CD Luu, PJ Allen (2021). A Second-Generation (44-Channel) Suprachoroidal 
+               Retinal Prosthesis: Interim Clinical Trial Results.
+               *Translational Vision Science & Technology*, doi: `10.1167/tvst.10.10.12 
+               <https://doi.org/10.1167/tvst.10.10.12>`_.
 .. [Stingl2013] K Stingl, KU Bartz-Schmidt, D Besch, A Braun, A Bruckmann,
                 F Gekeler, U Greppmaier, S Hipp, G Hortdorfer, C Kernstock,
                 A Koitschev, A Kusnyerik, H Sachs, A Schatz, KT Stingl,
@@ -84,6 +105,11 @@ Studies referenced throughout the Documentation:
                 receptive field density as a function of visual field
                 location. *Journal of Vision* 14(7):1-17,
                 doi:`10.1167/14.7.15 <https://doi.org/10.1167/14.7.15>`_.
+.. [Weitz2015]  Weitz, A. C., Nanduri, D., Behrend, M. R., Gonzalez-Calle, A.,
+                Greenberg, R. J., Humayun, M. S., ... & Weiland, J. D. (2015).
+                Improving the spatial resolution of epiretinal implants by 
+                increasing stimulus pulse duration. Science translational medicine,
+                7(318), 318ra203-318ra203.
 .. [WileyWebster1982] JD Wiley, JG Webster (1982). Analysis and control of the
                       current distribution under circular dispersive 
                       electrodes. *IEEE Transactions on Biomedical Engineering*

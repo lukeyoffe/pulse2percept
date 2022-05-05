@@ -1,6 +1,6 @@
 """`Stimulus`, `ImageStimulus`"""
 import warnings
-from ..utils import PrettyPrint, parfor, unique, is_strictly_increasing
+from ..utils import PrettyPrint, unique, is_strictly_increasing
 from ..utils.constants import DT, MIN_AMP
 from ._base import fast_compress_space, fast_compress_time
 
@@ -18,13 +18,27 @@ np.set_printoptions(precision=2, threshold=5, edgeitems=2)
 logging.captureWarnings(True)
 
 
-def merge_time_axes(data, time):
-    """Merge time axes
+def merge_time_axes(data, time, merge_tolerance=1e-6):
+    """
+    Merge time axes
 
     When a collection of source types is passed, it is possible that they
     have different time axes (e.g., different time steps, or a different
     stimulus duration). In this case, we need to merge all time axes into a
     single, coherent one. This is expensive, because of interpolation.
+
+    Parameters
+    ----------
+    data: list
+        List of numpy.ndarray's containing data points associated with time axes.
+    time: list
+        List of numpy.ndarray's containing time points to merge
+    merge_tolerance: float
+        Float representing the tolerance used when collecting unique time points from the time axes.
+    Returns
+        Tuple of: list of new data points (linearly interpolated from merged time axis), list of new merged time axis.
+    -------
+
     """
     # We can skip the costly interpolation if all `time` vectors are
     # identical:
@@ -36,8 +50,8 @@ def merge_time_axes(data, time):
     if identical:
         return data, [time[0]]
     # Otherwise, we need to interpolate. Keep only the unique time points
-    # across stimuli:
-    new_time = unique(np.concatenate(time), tol=DT)
+    # across stimuli. We need a higher tolerance to ensure interpolation is correct.
+    new_time = unique(np.concatenate(time), tol=merge_tolerance)
     # Now we need to interpolate the data values at each of these
     # new time points.
     new_data = []
@@ -200,8 +214,8 @@ class Stimulus(PrettyPrint):
             electrodes = None
         elif isinstance(source, np.ndarray):
             if source.ndim > 1:
-                raise ValueError("Cannot create Stimulus object from a %d-D "
-                                 "NumPy array. Must be 1-D." % source.ndim)
+                raise ValueError(f"Cannot create Stimulus object from a "
+                                 f"{source.ndim}-D NumPy array. Must be 1-D.")
             # 1D NumPy array with N elements: 1 electrode, N time points
             data = source.astype(np.float32).reshape((1, -1))
             time = np.arange(data.shape[-1], dtype=np.float32)
@@ -212,9 +226,9 @@ class Stimulus(PrettyPrint):
             time = source.time
             electrodes = source.electrodes
         else:
-            raise TypeError("Cannot create Stimulus object from %s. Choose "
-                            "from: scalar, tuple, list, NumPy array, or "
-                            "Stimulus." % type(source))
+            raise TypeError(f"Cannot create Stimulus object from {type(source)}. Choose "
+                            f"from: scalar, tuple, list, NumPy array, or "
+                            f"Stimulus.")
         return time, data, electrodes
 
     def _factory(self, source, electrodes, time, compress):
@@ -226,6 +240,11 @@ class Stimulus(PrettyPrint):
             _data = source.data
             _time = source.time
             _electrodes = source.electrodes
+            if 'electrodes' not in source.metadata.keys():
+                self.metadata['electrodes'][str(_electrodes[0])] = {
+                    'metadata': source.metadata, 'type': type(source)}
+            else:
+                self.metadata = source.metadata
         elif isinstance(source, np.ndarray):
             # A NumPy array is either 1-D (list of electrodes, time=None) or
             # 2-D (electrodes x time points):
@@ -238,8 +257,8 @@ class Stimulus(PrettyPrint):
                 _time = np.arange(_data.shape[-1], dtype=np.float32)
                 _electrodes = np.arange(_data.shape[0])
             else:
-                raise ValueError("Cannot create Stimulus object from a %d-D "
-                                 "NumPy array. Must be < 2-D." % source.ndim)
+                raise ValueError(f"Cannot create Stimulus object from a "
+                                 f"{source.ndim}-D NumPy array. Must be < 2-D.")
         else:
             # Input is either a scalar or (more likely) a collection of source
             # types. Easiest to tream them all as a collection and iterate:
@@ -295,28 +314,28 @@ class Stimulus(PrettyPrint):
                 except ValueError:
                     _electrodes = np.array(_electrodes)
         if len(_electrodes) != _data.shape[0]:
-            raise ValueError("Number of electrodes provided (%d) does not "
-                             "match the number of electrodes in the data "
-                             "(%d)." % (len(_electrodes), _data.shape[0]))
+            raise ValueError(f"Number of electrodes provided ({len(_electrodes)}) does "
+                             f"not match the number of electrodes in the data "
+                             f"({_data.shape[0]}).")
         unq, nunq = np.unique(_electrodes, return_index=True)
         if len(unq) != _data.shape[0]:
             # We found duplicate names: replace them by integer index
             idx = np.delete(np.arange(len(_electrodes)), nunq)
-            msg = ("Duplicate electrode names detected %s, and replaced with "
-                   "integer values" % _electrodes[idx])
+            msg = (f"Duplicate electrode names detected {_electrodes[idx]}, "
+                   f"and replaced with integer values")
             warnings.warn(msg)
             _electrodes[idx] = idx
 
         # User can overwrite time:
         if time is not None:
             if _time is None:
-                raise ValueError("Cannot set times=%s, because stimulus does "
-                                 "not have a time component." % time)
+                raise ValueError(f"Cannot set times={time}, because stimulus does "
+                                 f"not have a time component.")
             time = np.array(time).flatten()
             if len(time) != _data.shape[1]:
-                raise ValueError("Number of time steps provided (%d) does not "
-                                 "match the number of time steps in the data "
-                                 "(%d)." % (len(time), _data.shape[1]))
+                raise ValueError(f"Number of time steps provided ({len(time)}) does not "
+                                 f"match the number of time steps in the data "
+                                 f"({_data.shape[1]}).")
             _time = time
 
         # Store the data in the private container. Setting all elements at once
@@ -379,8 +398,8 @@ class Stimulus(PrettyPrint):
 
         """
         if not isinstance(other, Stimulus):
-            raise TypeError("Other object must be a Stimulus, not "
-                            "%s." % type(other))
+            raise TypeError(f"Other object must be a Stimulus, not "
+                            f"{type(other)}.")
         if self.time is None or other.time is None:
             raise ValueError("Cannot append another stimulus if time=None.")
         if not np.all(other.electrodes == self.electrodes):
@@ -393,10 +412,10 @@ class Stimulus(PrettyPrint):
         # but only if they have the same amplitude(s):
         if isclose(other.time[0], 0, abs_tol=DT):
             if not np.allclose(other.data[:, 0], self.data[:, -1]):
-                err_str = ("Data mismatch: Cannot append other stimulus "
-                           "because other[t=0] != this[t=%fms]. You may need "
-                           "to shift the other stimulus in time by at least "
-                           "%.1e ms." % (this.time[-1], DT))
+                err_str = (f"Data mismatch: Cannot append other stimulus "
+                           f"because other[t=0] != this[t={self.time[-1]}ms]. You may need "
+                           f"to shift the other stimulus in time by at least "
+                           f"{DT:.1e} ms.")
                 raise ValueError(err_str)
             time = np.hstack((self.time, other.time[1:] + self.time[-1]))
             data = np.hstack((self.data, other.data[:, 1:]))
@@ -409,6 +428,48 @@ class Stimulus(PrettyPrint):
                       'electrodes': self.electrodes,
                       'time': time}
         return stim
+
+    def remove(self, electrodes):
+        """Remove electrode(s)
+
+        Removes the stimulus of a certain electrode or list of electrodes.
+
+        .. versionadded:: 0.8
+
+        Parameters
+        ----------
+        electrodes : int, string, or list of int/str
+            The item(s) to remove from the stimulus. Can either be an electrode
+            index, electrode name, or a list thereof.
+        """
+        if not electrodes:
+            return
+        if np.isscalar(electrodes) and electrodes == 'all':
+            self._stim = {
+                'data': self.data[[]],
+                'electrodes': [],
+                'time': self.time
+            }
+            return
+        # Start with a list of True and set the removed electrodes to False:
+        keep_el = np.ones(len(self.electrodes), dtype=bool)
+        for electrode in np.array([electrodes]).ravel():
+            try:
+                # Check if `electrode` is an index into the electrodes array:
+                self.electrodes[electrode]
+                keep_el[electrode] = False
+            except (IndexError, KeyError):
+                # Another possibility is that a string with the electrode name
+                # was passed. In this case, find the corresponding list index:
+                try:
+                    keep_el[list(self.electrodes).index(electrode)] = False
+                except ValueError:
+                    raise ValueError(f'Electrode "{electrode}" not found.')
+        self._stim = {
+            'data': self.data[keep_el],
+            'electrodes': self.electrodes[keep_el],
+            'time': self.time,
+        }
 
     def plot(self, electrodes=None, time=None, fmt='k-', ax=None):
         """Plot the stimulus
@@ -466,8 +527,8 @@ class Stimulus(PrettyPrint):
             t_idx = time
             t_vals = self.time[t_idx]
         else:
-            raise TypeError('"time" must be a tuple, slice, list, or NumPy '
-                            'array, not %s.' % type(time))
+            raise TypeError(f'"time" must be a tuple, slice, list, or NumPy '
+                            f'array, not {type(time)}.')
         axes = ax
         if axes is None:
             if len(electrodes) == 1:
@@ -480,12 +541,11 @@ class Stimulus(PrettyPrint):
             axes = [axes]
         for i, ax in enumerate(axes):
             if not isinstance(ax, Subplot):
-                raise TypeError("'axes' must be a list of subplots, but "
-                                "axes[%d] is %s." % (i, type(ax)))
+                raise TypeError(f"'axes' must be a list of subplots, but "
+                                f"axes[{i}] is {type(ax)}.")
         if len(axes) != len(electrodes):
-            raise ValueError("Number of subplots (%d) must be equal to the "
-                             "number of electrodes (%d)." % (len(axes),
-                                                             len(electrodes)))
+            raise ValueError(f"Number of subplots ({len(axes)}) must be equal to the "
+                             f"number of electrodes ({len(electrodes)}).")
         # Plot each electrode in its own subplot:
         for ax, electrode in zip(axes, electrodes):
             # Slice or interpolate stimulus:
@@ -692,8 +752,8 @@ class Stimulus(PrettyPrint):
         a_supported = np.isscalar(a) and not isinstance(a, str)
         b_supported = np.isscalar(b) and not isinstance(b, str)
         if not a_supported and not b_supported:
-            raise TypeError("Unsupported operand for types %s and "
-                            "%s" % (type(a), type(b)))
+            raise TypeError(f"Unsupported operand for types {(type(a))} and "
+                            f"{type(b)}")
         # Return a copy of the current object with the new data:
         stim = deepcopy(self)
         stim._stim = {'data': op(a, b) if field == 'data' else stim.data,
@@ -745,26 +805,26 @@ class Stimulus(PrettyPrint):
         # Check stimulus data for consistency:
         for field in ['data', 'electrodes', 'time']:
             if field not in stim:
-                raise AttributeError("Stimulus dict must contain a field "
-                                     "'%s'." % field)
+                raise AttributeError(f"Stimulus dict must contain a field "
+                                     f"'{field}'.")
         data_shape = stim['data'].shape
         if data_shape[0] > 0 and stim['data'].ndim != 2:
-            raise ValueError("Stimulus data must be a 2-D NumPy array, not "
-                             "%d-D." % stim['data'].ndim)
+            raise ValueError(f"Stimulus data must be a 2-D NumPy array, not "
+                             f"{stim['data'].ndim}-D.")
         n_electrodes = len(stim['electrodes'])
         if n_electrodes != data_shape[0]:
-            raise ValueError("Number of electrodes (%d) must match the number "
-                             "of rows in the data array "
-                             "(%d)." % (n_electrodes, data_shape[0]))
+            raise ValueError(f"Number of electrodes ({n_electrodes}) must match the number "
+                             f"of rows in the data array "
+                             f"({data_shape[0]}).")
         if stim['time'] is not None:
             n_time = len(stim['time'])
             if n_time != data_shape[1]:
-                raise ValueError("Number of time points (%d) must match the "
-                                 "number of columns in the data array "
-                                 "(%d)." % (n_time, data_shape[1]))
+                raise ValueError(f"Number of time points ({n_time}) must match the "
+                                 f"number of columns in the data array "
+                                 f"({data_shape[1]}).")
             if not is_strictly_increasing(stim['time'], tol=0.95*DT):
-                msg = ("Time points must be strictly monotonically ",
-                       "increasing: %s" % list(stim['time']))
+                msg = (f"Time points must be strictly monotonically "
+                       f"increasing: {list(stim['time'])}")
                 warnings.warn(msg)
         elif data_shape[0] > 0:
             if data_shape[1] > 1:
@@ -825,8 +885,8 @@ class Stimulus(PrettyPrint):
         if f_caller in ["__init__", "compress"]:
             self._is_compressed = val
         else:
-            err_s = ("The attribute `is_compressed` can only be set in the "
-                     "constructor or in `compress`, not in `%s`." % f_caller)
+            err_s = (f"The attribute `is_compressed` can only be set in the "
+                     f"constructor or in `compress`, not in `{f_caller}`.")
             raise AttributeError(err_s)
 
     @property

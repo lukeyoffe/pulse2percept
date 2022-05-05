@@ -1,16 +1,17 @@
+from pulse2percept.utils import Grid2D
+from pulse2percept.percepts import Percept
+from skimage.io import imread
+from skimage import img_as_float
+from imageio import mimread
+from matplotlib.animation import FuncAnimation
+from matplotlib.axes import Subplot
+import matplotlib.pyplot as plt
 import os
 import numpy as np
 import pytest
 import numpy.testing as npt
-import matplotlib.pyplot as plt
-from matplotlib.axes import Subplot
-from matplotlib.animation import FuncAnimation
-from imageio import mimread
-from skimage import img_as_float
-from skimage.io import imread
-
-from pulse2percept.percepts import Percept
-from pulse2percept.utils import Grid2D
+import matplotlib
+matplotlib.use('Agg')
 
 
 def test_Percept():
@@ -47,8 +48,29 @@ def test_Percept():
     npt.assert_almost_equal(percept.ydva, grid._yflat)
     npt.assert_almost_equal(percept.time, [0])
 
+    # Gray levels
+    for n_gray in [2, 4]:
+        percept = Percept(np.arange(49, dtype=float).reshape((7, 7, 1)),
+                          n_gray=n_gray)
+        npt.assert_equal(len(np.unique(percept.data)), n_gray)
+
     with pytest.raises(TypeError):
         Percept(ndarray, space={'x': [0, 1, 2], 'y': [0, 1, 2, 3, 4]})
+    with pytest.raises(ValueError):
+        Percept(ndarray, n_gray=1.2)
+    with pytest.raises(ValueError):
+        Percept(ndarray, n_gray=-3)
+
+    # Noise:
+    data = np.arange(100, dtype=float).reshape((5, 5, 4))
+    npt.assert_almost_equal(Percept(data, noise=0).data, data)
+    npt.assert_almost_equal(Percept(data, noise=0.0).data, data)
+    for noise in [0.5, 1.0]:
+        percept = Percept(data, noise=noise)
+        n_white = sum(np.isclose(percept.data.ravel(), 99.0))
+        n_black = sum(np.isclose(percept.data.ravel(), 0.0))
+        npt.assert_equal(abs(n_white - 0.5 * noise * data.size) <= 2, True)
+        npt.assert_equal(abs(n_black - 0.5 * noise * data.size) <= 2, True)
 
 
 def test_Percept__iter__():
@@ -86,12 +108,6 @@ def test_Percept_max():
         percept.max(axis='invalid')
 
 
-def test_Percept_get_brightest_frame():
-    percept = Percept(np.arange(30).reshape((3, 5, 2)))
-    npt.assert_almost_equal(percept.get_brightest_frame(),
-                            percept.data[..., 1])
-
-
 def test_Percept_plot():
     y_range = (-1, 1)
     x_range = (-2, 2)
@@ -102,7 +118,7 @@ def test_Percept_plot():
     ax = percept.plot(kind='pcolor')
     npt.assert_equal(isinstance(ax, Subplot), True)
     npt.assert_almost_equal(ax.axis(), [*x_range, *y_range])
-    frame = percept.get_brightest_frame()
+    frame = percept.max(axis='frames')
     npt.assert_almost_equal(ax.collections[0].get_clim(),
                             [frame.min(), frame.max()])
 
@@ -134,7 +150,7 @@ def test_Percept_plot():
         percept.plot(ax='invalid')
 
 
-@pytest.mark.parametrize('n_frames', (2, 3, 10, 14))
+@ pytest.mark.parametrize('n_frames', (2, 3, 10, 14))
 def test_Percept_play(n_frames):
     ndarray = np.random.rand(2, 4, n_frames)
     percept = Percept(ndarray)
@@ -143,20 +159,19 @@ def test_Percept_play(n_frames):
     npt.assert_equal(len(list(ani.frame_seq)), n_frames)
 
 
-@pytest.mark.parametrize('dtype', (np.float32, np.uint8))
+@ pytest.mark.parametrize('dtype', (np.float32, np.uint8))
 def test_Percept_save(dtype):
     ndarray = np.arange(256, dtype=dtype).repeat(31).reshape((-1, 16, 16))
     percept = Percept(ndarray.transpose((2, 0, 1)))
 
     # Save multiple frames as a gif or movie:
     for fname in ['test.mp4', 'test.avi', 'test.mov', 'test.wmv', 'test.gif']:
-        print(fname)
         percept.save(fname)
         npt.assert_equal(os.path.isfile(fname), True)
         # Normalized to [0, 255] with some loss of precision:
-        mov = mimread(fname)
-        npt.assert_equal(np.min(mov) <= 2, True)
-        npt.assert_equal(np.max(mov) >= 250, True)
+        for mov in mimread(fname):
+            npt.assert_equal(np.min(mov) <= 2, True)
+            npt.assert_equal(np.max(mov) >= 250, True)
         os.remove(fname)
 
     # Cannot save multiple frames image:

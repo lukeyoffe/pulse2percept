@@ -5,7 +5,6 @@ from .base import Model, SpatialModel, TemporalModel
 from ._nanduri2012 import spatial_fast, temporal_fast
 from ..implants import ElectrodeArray, DiskElectrode
 from ..stimuli import Stimulus
-from ..utils import Curcio1990Transform
 
 
 class Nanduri2012Spatial(SpatialModel):
@@ -39,30 +38,31 @@ class Nanduri2012Spatial(SpatialModel):
         Nominator of the attentuation function
     atten_n : float32, optional
         Exponent of the attenuation function's denominator
+    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+        object that provides ``ret2dva`` and ``dva2ret`` methods.
+        By default, :py:class:`~pulse2percept.utils.Curcio1990Map` is
+        used.
+    n_gray : int, optional
+        The number of gray levels to use. If an integer is given, k-means
+        clustering is used to compress the color space of the percept into
+        ``n_gray`` bins. If None, no compression is performed.
+    noise : float or int, optional
+        Adds salt-and-pepper noise to each percept frame. An integer will be
+        interpreted as the number of pixels to subject to noise in each frame.
+        A float between 0 and 1 will be interpreted as a ratio of pixels to
+        subject to noise in each frame.
+    n_threads : int, optional
+        Number of CPU threads to use during parallelization using OpenMP. 
+        Defaults to max number of user CPU cores.
 
     """
 
     def get_default_params(self):
         """Returns all settable parameters of the Nanduri model"""
-        params = super(Nanduri2012Spatial, self).get_default_params()
-        params.update({'atten_a': 14000, 'atten_n': 1.69})
-        return params
-
-    def dva2ret(self, xdva):
-        """Convert degrees of visual angle (dva) to retinal eccentricity (um)
-
-        Assumes that one degree of visual angle is equal to 280 um on the
-        retina.
-        """
-        return Curcio1990Transform.dva2ret(xdva)
-
-    def ret2dva(self, xret):
-        """Convert retinal eccentricity (um) to degrees of visual angle (dva)
-
-        Assumes that one degree of visual angle is equal to 280 um on the
-        retina.
-        """
-        return Curcio1990Transform.ret2dva(xret)
+        base_params = super(Nanduri2012Spatial, self).get_default_params()
+        params = {'atten_a': 14000, 'atten_n': 1.69}
+        return {**base_params, **params}
 
     def _predict_spatial(self, earray, stim):
         """Predicts the brightness at spatial locations"""
@@ -81,7 +81,8 @@ class Nanduri2012Spatial(SpatialModel):
                             self.grid.yret.ravel(),
                             self.atten_a,
                             self.atten_n,
-                            self.thresh_percept)
+                            self.thresh_percept,
+                            self.n_threads)
 
     def predict_percept(self, implant, t_percept=None):
         if not np.all([isinstance(e, DiskElectrode)
@@ -127,8 +128,11 @@ class Nanduri2012Temporal(TemporalModel):
         Shift of the logistic function in the stationary nonlinearity stage.
     scale_out : float32, optional
         A scaling factor applied to the output of the model
-    thresh_percept: float, optional
+    thresh_percept : float, optional
         Below threshold, the percept has brightness zero.
+    n_threads : int, optional
+        Number of CPU threads to use during parallelization using OpenMP. 
+        Defaults to max number of user CPU cores.
 
     """
 
@@ -152,12 +156,7 @@ class Nanduri2012Temporal(TemporalModel):
             # Scale the output:
             'scale_out': 1.0
         }
-        # This is subtle: Rather than calling `params.update(base_params)`, we
-        # call `base_params.update(params)`. This will overwrite `base_params`
-        # with values from `params`, which allows us to set `thresh_percept`=0
-        # rather than what the BaseModel dictates:
-        base_params.update(params)
-        return base_params
+        return {**base_params, **params}
 
     def _predict_temporal(self, stim, t_percept):
         """Predict the temporal response"""
@@ -169,15 +168,15 @@ class Nanduri2012Temporal(TemporalModel):
         # np.uint32, so we need to np.round it first:
         idx_percept = np.uint32(np.round(t_percept / self.dt))
         if np.unique(idx_percept).size < t_percept.size:
-            raise ValueError("All times 't_percept' must be distinct multiples "
-                             "of `dt`=%.2e" % self.dt)
+            raise ValueError(f"All times 't_percept' must be distinct multiples "
+                             f"of `dt`={self.dt:.2e}")
         # Cython returns a 2D (space x time) NumPy array:
         return temporal_fast(stim_data.astype(np.float32),
                              stim.time.astype(np.float32),
                              idx_percept,
                              self.dt, self.tau1, self.tau2, self.tau3,
                              self.asymptote, self.shift, self.slope, self.eps,
-                             self.scale_out, self.thresh_percept)
+                             self.scale_out, self.thresh_percept, self.n_threads)
 
 
 class Nanduri2012Model(Model):
@@ -192,7 +191,6 @@ class Nanduri2012Model(Model):
        calculate the spatial activation function, which is assumed to be
        equivalent to the "current spread" described as a function of distance
        from the center of the stimulating electrode (see Eq.2 in the paper).
-
     *  :py:class:`~pulse2percept.models.Nanduri2012Temporal` is used to
        calculate the temporal activation function, which is assumed to be the
        output of a linear-nonlinear cascade model (see Fig.6 in the paper).
@@ -224,6 +222,23 @@ class Nanduri2012Model(Model):
         A scaling factor applied to the output of the model
     thresh_percept: float, optional
         Below threshold, the percept has brightness zero.
+    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+        object that provides ``ret2dva`` and ``dva2ret`` methods.
+        By default, :py:class:`~pulse2percept.utils.Curcio1990Map` is
+        used.
+    n_gray : int, optional
+        The number of gray levels to use. If an integer is given, k-means
+        clustering is used to compress the color space of the percept into
+        ``n_gray`` bins. If None, no compression is performed.
+    noise : float or int, optional
+        Adds salt-and-pepper noise to each percept frame. An integer will be
+        interpreted as the number of pixels to subject to noise in each frame.
+        A float between 0 and 1 will be interpreted as a ratio of pixels to
+        subject to noise in each frame.
+    n_threads: int, optional
+            Number of CPU threads to use during parallelization using OpenMP. Defaults to max number of user CPU cores.
+
     """
 
     def __init__(self, **params):

@@ -1,14 +1,17 @@
+import copy
+
 import numpy as np
 import pytest
 import numpy.testing as npt
 from matplotlib.axes import Subplot
+import time
 
 from pulse2percept.implants import ArgusI
 from pulse2percept.stimuli import Stimulus
 from pulse2percept.percepts import Percept
 from pulse2percept.models import (BaseModel, Model, NotBuiltError,
                                   SpatialModel, TemporalModel)
-from pulse2percept.utils import FreezeError, Grid2D
+from pulse2percept.utils import FreezeError, Grid2D, Watson2014Map
 
 
 class ValidBaseModel(BaseModel):
@@ -50,11 +53,10 @@ def test_BaseModel():
 
 class ValidSpatialModel(SpatialModel):
 
-    def dva2ret(self, dva):
-        return dva
-
-    def ret2dva(self, ret):
-        return ret
+    def get_default_params(self):
+        params = super(ValidSpatialModel, self).get_default_params()
+        params.update({'retinotopy': Watson2014Map()})
+        return params
 
     def _predict_spatial(self, earray, stim):
         if not self.is_built:
@@ -109,6 +111,70 @@ def test_SpatialModel():
     with pytest.raises(TypeError):
         # must pass an implant
         ValidSpatialModel().build().predict_percept(Stimulus(3))
+
+def test_eq_SpatialModel():
+    valid = ValidSpatialModel()
+
+    # Assert not equal for differing classes
+    npt.assert_equal(valid == ValidBaseModel(), False)
+
+    # Assert equal to itself
+    npt.assert_equal(valid == valid, True)
+
+    # Assert equal for shallow references
+    copied = valid
+    npt.assert_equal(valid == copied, True)
+
+    # Assert deep copies are equal
+    copied = copy.deepcopy(valid)
+    npt.assert_equal(valid == copied, True)
+
+    # Assert different models do not equal each other
+    differing_model = ValidSpatialModel(xrange=(-10, 10))
+    npt.assert_equal(valid != differing_model, True)
+
+def test_deepcopy_SpatialModel():
+    original = ValidSpatialModel()
+    copied = copy.deepcopy(original)
+
+    # Assert they are different objects
+    npt.assert_equal(id(original) != id(copied), True)
+
+    # Assert the objects are equivalent to each other
+    npt.assert_equal(original == copied, True)
+
+    # Assert building one object does not affect the copied
+    original.build()
+    npt.assert_equal(copied.is_built, False)
+    npt.assert_equal(original != copied, True)
+
+    # Change the copied attribute by "destroying" the retinotopy attribute
+    # which should be unique to each SpatialModel object
+    copied = copy.deepcopy(original)
+    copied.retinotopy = None
+    npt.assert_equal(original.retinotopy is not None, True)
+    npt.assert_equal(original != copied, True)
+
+    # Assert "destroying" the original doesn't affect the copied
+    original = None
+    npt.assert_equal(copied is not None, True)
+
+
+def test_SpatialModel_plot():
+    model = ValidSpatialModel()
+    model.build()
+    # Simulated area might be larger than that:
+    model = ValidSpatialModel(xrange=(-20.5, 20.5), yrange=(-16.1, 16.1))
+    model.build()
+    ax = model.plot(use_dva=True)
+    npt.assert_almost_equal(ax.get_xlim(), (-22.55, 22.55))
+    ax = model.plot(use_dva=False)
+    npt.assert_almost_equal(ax.get_xlim(), (-6122.87, 6122.87), decimal=2)
+    npt.assert_almost_equal(ax.get_ylim(), (-4808.7, 4808.7), decimal=2)
+
+    # Figure size can be changed:
+    ax = model.plot(figsize=(8, 7))
+    npt.assert_almost_equal(ax.figure.get_size_inches(), (8, 7))
 
 
 class ValidTemporalModel(TemporalModel):
@@ -174,6 +240,53 @@ def test_TemporalModel():
     with pytest.raises(TypeError):
         # Must pass a stimulus:
         ValidTemporalModel().build().predict_percept(ArgusI())
+
+def test_eq_TemporalModel():
+    valid = ValidTemporalModel()
+
+    # Assert not equal for differing classes
+    npt.assert_equal(valid == ValidBaseModel(), False)
+
+    # Assert equal to itself
+    npt.assert_equal(valid == valid, True)
+
+    # Assert equal for shallow references
+    copied = valid
+    npt.assert_equal(valid == copied, True)
+
+    # Assert deep copies are equal
+    copied = copy.deepcopy(valid)
+    npt.assert_equal(valid == copied, True)
+
+    # Assert different models do not equal each other
+    differing_model = ValidSpatialModel(xrange=(-10, 10))
+    npt.assert_equal(valid != differing_model, True)
+
+
+def test_deepcopy_TemporalModel():
+    original = ValidTemporalModel()
+    copied = copy.deepcopy(original)
+
+    # Assert they are different objects
+    npt.assert_equal(id(original) != id(copied), True)
+
+    # Assert the objects are equivalent to each other
+    npt.assert_equal(original == copied, True)
+
+    # Assert building one object does not affect the copied
+    original.build()
+    npt.assert_equal(copied.is_built, False)
+    npt.assert_equal(original != copied, True)
+
+    # Change the copied attribute by resetting the verbose attribute
+    copied = copy.deepcopy(original)
+    copied.verbose = False
+    npt.assert_equal(original.verbose, True)
+    npt.assert_equal(original != copied, True)
+
+    # Assert "destroying" the original doesn't affect the copied
+    original = None
+    npt.assert_equal(copied is not None, True)
 
 
 def test_Model():
@@ -342,3 +455,35 @@ def test_Model_predict_percept():
     with pytest.raises(TypeError):
         # Must pass an implant:
         model.predict_percept(Stimulus(3))
+
+
+def test_Model_predict_percept_correctly_parallelizes():
+    # setup and time spatial model with 1 thread
+    one_thread_spatial = Model(spatial=ValidSpatialModel(n_threads=1)).build()
+    start_time_one_thread_spatial = time.perf_counter()
+    one_thread_spatial.predict_percept(ArgusI())
+    one_thread_spatial_predict_time = time.perf_counter() - start_time_one_thread_spatial
+
+    # setup and time spatial model with 2 threads
+    two_thread_spatial = Model(spatial=ValidSpatialModel(n_threads=2)).build()
+    start_time_two_thread_spatial = time.perf_counter()
+    two_thread_spatial.predict_percept(ArgusI())
+    two_threaded_spatial_predict_time = time.perf_counter() - start_time_two_thread_spatial
+
+    # we expect roughly a linear decrease in time as thread count increases
+    npt.assert_almost_equal(actual=two_threaded_spatial_predict_time, desired=one_thread_spatial_predict_time / 2, decimal=1e-5)
+
+    # setup and time temporal model with 1 thread
+    one_thread_temporal = Model(temporal=ValidTemporalModel(n_threads=1)).build()
+    start_time_one_thread_temporal = time.perf_counter()
+    one_thread_temporal.predict_percept(ArgusI())
+    one_thread_temporal_predict_time = time.perf_counter() - start_time_one_thread_temporal
+
+    # setup and time temporal model with 2 threads
+    two_thread_temporal = Model(temporal=ValidTemporalModel(n_threads=2)).build()
+    start_time_two_thread_temporal = time.perf_counter()
+    two_thread_temporal.predict_percept(ArgusI())
+    two_thread_temporal_predict_time = time.perf_counter() - start_time_two_thread_temporal
+
+    # we expect roughly a linear decrease in time as thread count increases
+    npt.assert_almost_equal(actual=two_thread_temporal_predict_time, desired=one_thread_temporal_predict_time / 2, decimal=1e-5)

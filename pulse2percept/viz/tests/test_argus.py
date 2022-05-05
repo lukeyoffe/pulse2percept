@@ -1,13 +1,14 @@
+from pulse2percept.viz import (plot_argus_phosphenes,
+                               plot_argus_simulated_phosphenes)
+from pulse2percept.implants import ArgusI, ArgusII, AlphaAMS
+from pulse2percept.models import AxonMapModel, ScoreboardModel
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import numpy.testing as npt
 import pytest
-import matplotlib.pyplot as plt
-
-from pulse2percept.models import AxonMapModel, ScoreboardModel
-from pulse2percept.implants import ArgusI, ArgusII, AlphaAMS
-from pulse2percept.viz import (plot_argus_phosphenes,
-                               plot_argus_simulated_phosphenes)
+import matplotlib
+matplotlib.use('Agg')
 
 
 def test_plot_argus_phosphenes():
@@ -41,6 +42,9 @@ def test_plot_argus_phosphenes():
     # Works only for axon maps:
     with pytest.raises(TypeError):
         plot_argus_phosphenes(df, ArgusI(), ax=ax, axon_map=ScoreboardModel())
+
+    # Manual subject selection
+    plot_argus_phosphenes(df[df.electrode == 'B2'], ArgusI(), ax=ax)
 
 
 @pytest.mark.parametrize('implant', (ArgusI(), ArgusII()))
