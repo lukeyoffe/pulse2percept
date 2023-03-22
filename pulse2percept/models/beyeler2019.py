@@ -55,10 +55,10 @@ class ScoreboardSpatial(SpatialModel):
         use ``xrange=(0, 1)`` and ``xystep=0.5``.
     grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
-    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
-        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+    retinotopy : :py:class:`~pulse2percept.topography.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.topography.VisualFieldMap`
         that provides retinotopic mappings.
-        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        By default, :py:class:`~pulse2percept.topography.Watson2014Map` is
         used.
     n_gray : int, optional
         The number of gray levels to use. If an integer is given, k-means
@@ -103,6 +103,7 @@ class ScoreboardSpatial(SpatialModel):
                                self.grid.ret.y.ravel(),
                                self.rho,
                                self.thresh_percept,
+                               0, 0, # don't set current boundaries
                                self.n_threads)
 
 
@@ -137,10 +138,10 @@ class ScoreboardModel(Model):
         use ``xrange=(0, 1)`` and ``xystep=0.5``.
     grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
-    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
-        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+    retinotopy : :py:class:`~pulse2percept.topography.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.topography.VisualFieldMap`
         object that provides retinotopic mappings.
-        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        By default, :py:class:`~pulse2percept.topography.Watson2014Map` is
         used.
     n_gray : int, optional
         The number of gray levels to use. If an integer is given, k-means
@@ -204,10 +205,10 @@ class AxonMapSpatial(SpatialModel):
         use ``xrange=(0, 1)`` and ``xystep=0.5``.
     grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
-    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
-        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+    retinotopy : :py:class:`~pulse2percept.topography.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.topography.VisualFieldMap`
         object that provides retinotopic mappings.
-        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        By default, :py:class:`~pulse2percept.topography.Watson2014Map` is
         used.
     n_gray : int, optional
         The number of gray levels to use. If an integer is given, k-means
@@ -788,7 +789,6 @@ class AxonMapSpatial(SpatialModel):
             od_xy = self.loc_od
             od_w = 6.44
             od_h = 6.85
-            grid_transform = None
             # Flip y upside down for dva:
             axon_bundles = [np.array(self.retinotopy.ret_to_dva(bundle[:, 0],
                                                              -bundle[:, 1])).T
@@ -808,7 +808,6 @@ class AxonMapSpatial(SpatialModel):
             od_xy = self.retinotopy.dva_to_ret(*self.loc_od)
             od_w = 1770
             od_h = 1880
-            grid_transform = self.retinotopy.dva_to_ret
             if self.eye == 'RE':
                 labels = ['superior', 'inferior', 'temporal', 'nasal']
             else:
@@ -829,8 +828,8 @@ class AxonMapSpatial(SpatialModel):
                              color='white', zorder=ZORDER['background'] + 1))
         # Show extent of simulated grid:
         if self.is_built:
-            self.grid.plot(ax=ax, transform=grid_transform, style=style,
-                           zorder=ZORDER['background'] + 2)
+            self.grid.plot(ax=ax, style=style, zorder=ZORDER['background'] + 2,
+                           use_dva=use_dva)
         ax.set_xlabel(f'x ({units})')
         ax.set_ylabel(f'y ({units})')
         if autoscale:
@@ -888,10 +887,10 @@ class AxonMapModel(Model):
         use ``xrange=(0, 1)`` and ``xystep=0.5``.
     grid_type : {'rectangular', 'hexagonal'}, optional
         Whether to simulate points on a rectangular or hexagonal grid
-    retinotopy : :py:class:`~pulse2percept.utils.VisualFieldMap`, optional
-        An instance of a :py:class:`~pulse2percept.utils.VisualFieldMap`
+    retinotopy : :py:class:`~pulse2percept.topography.VisualFieldMap`, optional
+        An instance of a :py:class:`~pulse2percept.topography.VisualFieldMap`
         object that provides retinotopic mappings.
-        By default, :py:class:`~pulse2percept.utils.Watson2014Map` is
+        By default, :py:class:`~pulse2percept.topography.Watson2014Map` is
         used.
     n_gray : int, optional
         The number of gray levels to use. If an integer is given, k-means

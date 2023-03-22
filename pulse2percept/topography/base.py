@@ -12,10 +12,12 @@ from collections import namedtuple
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
+import matplotlib as mpl
+
 
 from ..utils.base import PrettyPrint
 from ..utils.constants import ZORDER
-
+from ..models import BaseModel
 
 class Grid2D(PrettyPrint):
     """2D spatial grid
@@ -61,6 +63,8 @@ class Grid2D(PrettyPrint):
     """
 
     all_regions = ['dva', 'ret', 'v1', 'v2', 'v3']
+    discontinuous_x = ['v1', 'v2', 'v3']
+    discontinuous_y = ['v2', 'v3']
 
     @staticmethod
     def _register_regions(regions):
@@ -69,8 +73,9 @@ class Grid2D(PrettyPrint):
             tracked at the class level
             
             Note: The list of regions given does NOT need be the regions currently
-            being used. If a given region does not exist at call time, then a ValueError
-            will be raised (e.g. grid.v1 with retinal retinotopy will throw an error).
+            being used (can be all valid regions). If a given region does not exist 
+            at call time, then a ValueError will be raised (e.g. grid.v1 with a
+            retinal visual field map will throw an error).
 
             Parameters:
             ------------
@@ -117,7 +122,9 @@ class Grid2D(PrettyPrint):
         self.y_range = y_range
         self.step = step
         self.type = grid_type
+        self.retinotopy = None
         self.regions = []
+        self.retinotopy = None
         # Datatype for storing the grid of coordinates
         self.CoordinateGrid = namedtuple("CoordinateGrid", ['x', 'y'])
         # Internally, coordinate grids for each region are stored in _grid
@@ -191,7 +198,17 @@ class Grid2D(PrettyPrint):
     def reset(self):
         self._iter = 0
 
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self._grid[key]
+        elif isinstance(key, int):
+            return self.CoordinateGrid(self.x.ravel()[key], self.y.ravel()[key])
+        else:
+            raise ValueError(f"Unknown key: {key}. Must be region name or \
+                              integer position")
+
     def build(self, retinotopy):
+        self.retinotopy = retinotopy
         for region, map_fn in retinotopy.from_dva().items():
             self._grid[region] = self.CoordinateGrid(*map_fn(self.x, self.y))
             if region not in self.regions:
@@ -200,20 +217,12 @@ class Grid2D(PrettyPrint):
             if region not in self.all_regions:
                 self._register_regions([region])
 
-    def plot(self, transform=None, label=None, style='hull', autoscale=True,
-             zorder=None, ax=None, figsize=None, fc='gray'):
+    def plot(self, style='hull', autoscale=True, zorder=None, ax=None,
+            figsize=None, fc=None, use_dva=False, legend=False):
         """Plot the extension of the grid
 
         Parameters
         ----------
-        transform : function, optional
-            A coordinate transform to be applied to the (x,y) coordinates of
-            the grid (e.g., :py:meth:`Curcio1990Transform.dva_to_ret`). It must
-            accept two input arguments (x and y) and output two variables (the
-            transformed x and y).
-        label : str, optional
-            A name to be used as the label of the matplotlib plot. This can be used
-            to label plots with multiple regions (i.e. call plt.legend after)
         style : {'hull', 'scatter', 'cell'}, optional
             * 'hull': Show the convex hull of the grid (that is, the outline of
               the smallest convex set that contains all grid points).
@@ -232,6 +241,13 @@ class Grid2D(PrettyPrint):
         fc : str or valid matplotlib color, optional
             Facecolor, or edge color if style=scatter, of the plotted region
             Defaults to gray
+        use_dva : bool, optional
+            Whether dva or transformed points should be plotted.  If True, will
+            not apply any transformations, and if False, will apply all
+            transformations in self.retinotopy
+        legend : bool, optional
+            Whether to add a plot legend. The legend is always added if there 
+            are 2 or more regions. This only applies if there is 1 region.
         """
         if style.lower() not in ['hull', 'scatter', 'cell']:
             raise ValueError(f'Unknown plotting style "{style}". Choose from: '
@@ -254,46 +270,118 @@ class Grid2D(PrettyPrint):
             x_step = self.step
             y_step = self.step
 
-        if style.lower() == 'cell':
-            # Show a polygon for every grid cell that we are simulating:
-            if self.type == 'hexagonal':
-                raise NotImplementedError
-            patches = []
-            for xret, yret in zip(x.ravel(), y.ravel()):
-                # Outlines of the cell are given by (x,y) and the step size:
-                vertices = np.array([
-                    [xret - x_step / 2, yret - y_step / 2],
-                    [xret - x_step / 2, yret + y_step / 2],
-                    [xret + x_step / 2, yret + y_step / 2],
-                    [xret + x_step / 2, yret - y_step / 2],
-                ])
+        transforms = [('dva', None)]
+        if not use_dva:
+            transforms = self.retinotopy.from_dva().items()
+
+        color_map = {
+            'ret' : 'gray',
+            'dva' : 'gray',
+            'v1' : 'red',
+            'v2' : 'orange',
+            'v3' : 'green'
+        }        
+        # for tracking legend items when style='cell'
+        legends = []
+        for idx, (label, transform) in enumerate(transforms):
+            if fc is not None:
+                color = fc[label] if isinstance(fc, dict) else fc     
+            elif label in color_map.keys():
+                color = color_map[label]
+            else:
+                color = 'gray'
+
+            if style.lower() == 'cell':
+                # Show a polygon for every grid cell that we are simulating:
+                if self.type == 'hexagonal':
+                    raise NotImplementedError
+                patches = []
+                for xret, yret in zip(x.ravel(), y.ravel()):
+                    # Outlines of the cell are given by (x,y) and the step size:
+                    vertices = np.array([
+                        [xret - x_step / 2, yret - y_step / 2],
+                        [xret - x_step / 2, yret + y_step / 2],
+                        [xret + x_step / 2, yret + y_step / 2],
+                        [xret + x_step / 2, yret - y_step / 2],
+                    ])
+                    # If region is discontinuous and vertices cross boundary, skip
+                    if (transform and
+                        label in self.discontinuous_x and 
+                        np.sign(vertices[0][0]) != np.sign(vertices[2][0])):
+                        continue
+                    if (transform and
+                        label in self.discontinuous_y and 
+                        np.sign(vertices[0][1]) != np.sign(vertices[1][1])):
+                        continue
+                    # transform the points
+                    if transform is not None:
+                        vertices = np.array(transform(*vertices.T)).T
+                    patches.append(Polygon(vertices, alpha=0.3, ec='k', fc=color,
+                                        ls='--', zorder=zorder, label=label))
+                legends.append(patches[0])
+                ax.add_collection(PatchCollection(patches, match_original=True,
+                                                zorder=zorder, label=label))
+            else:
+                # Show either the convex hull or a scatter plot:
                 if transform is not None:
-                    vertices = np.array(transform(*vertices.T)).T
-                patches.append(Polygon(vertices, alpha=0.3, ec='k', fc=fc,
-                                       ls='--', zorder=zorder))
-            ax.add_collection(PatchCollection(patches, match_original=True,
-                                              zorder=zorder, label=label))
-        else:
-            # Show either the convex hull or a scatter plot:
-            if transform is not None:
-                x, y = transform(self.x, self.y)
-            points = np.vstack((x.ravel(), y.ravel()))
-            # Remove NaN values from the grid:
-            points = points[:, ~np.logical_or(*np.isnan(points))]
-            if style.lower() == 'hull':
-                hull = ConvexHull(points.T)
-                ax.add_patch(Polygon(points[:, hull.vertices].T, alpha=0.3, ec='k',
-                                     fc=fc, ls='--', zorder=zorder, label=label))
-            elif style.lower() == 'scatter':
-                ax.scatter(*points, alpha=0.3, ec=fc, color=fc, marker='+',
-                           zorder=zorder, label=label)
+                    x, y = transform(self.x, self.y)
+                points = np.vstack((x.ravel(), y.ravel()))
+                # Remove NaN values from the grid:
+                points = points[:, ~np.logical_or(*np.isnan(points))]
+                if style.lower() == 'hull':
+                    if self.retinotopy and self.retinotopy.split_map and not use_dva:
+                        # all split maps have an offset for left fovea
+                        divide = 0 if use_dva else self.retinotopy.left_offset / 2
+                        points_right = points[:, points[0] >= divide]
+                        points_left = points[:, points[0] <= divide]
+                        if points_right.size > 0:
+                            hull_right = ConvexHull(points_right.T)
+                            ax.add_patch(Polygon(points_right[:, hull_right.vertices].T, alpha=0.3, ec='k',
+                                            fc=color, ls='--', zorder=zorder))
+                        if points_left.size > 0:
+                            hull_left = ConvexHull(points_left.T)
+                            ax.add_patch(Polygon(points_left[:, hull_left.vertices].T, alpha=0.3, ec='k',
+                                            fc=color, ls='--', zorder=zorder))
+                    else:
+                        hull = ConvexHull(points.T)
+                        ax.add_patch(Polygon(points[:, hull.vertices].T, alpha=0.3, ec='k',
+                                            fc=color, ls='--', zorder=zorder))
+                    legends.append(ax.patches[-1])
+                elif style.lower() == 'scatter':
+                    ax.scatter(*points, alpha=0.4, ec=color, color=color, marker='+',
+                            zorder=zorder, label=label)
+        
         # This is needed in MPL 3.0.X to set the axis limit correctly:
         ax.autoscale_view()
+        # plot boundary between hemispheres if it exists
+        # but don't change the plot limits 
+        lim = ax.get_xlim()
+        if self.retinotopy and self.retinotopy.split_map:
+            boundary = self.retinotopy.left_offset / 2
+            if use_dva:
+                boundary = 0
+            ax.axvline(boundary, linestyle=':', c='gray')
+        ax.set_xlim(lim)
+
+        if len(transforms) > 1 or legend:
+            if style in ['cell', 'hull']:
+                ax.legend(legends, [t[0] for t in transforms], loc='upper right')
+            else:
+                ax.legend(loc='upper right')
+
         return ax
 
 
-class VisualFieldMap(object, metaclass=ABCMeta):
+class VisualFieldMap(BaseModel):
     """ Base template class for a visual field map (retinotopy) """
+
+    # If the map is split into left and right hemispheres. 
+    split_map = False
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # don't need build functionality from BaseModel
+        self.is_built = True
 
     @abstractmethod
     def from_dva(self):
@@ -308,3 +396,27 @@ class VisualFieldMap(object, metaclass=ABCMeta):
             transform is optional for most models.
         """
         raise NotImplementedError
+
+    def get_default_params(self):
+        """Required to inherit from BaseModel"""
+        return {}
+
+    def __eq__(self, other):
+        """
+        Equality operator for VisualFieldMap.
+
+        Parameters
+        ----------
+        other: VisualFieldMap
+            VisualFieldMap to compare against
+
+        Returns
+        -------
+        bool:
+            True if the compared objects have identical attributes, False otherwise.
+        """
+        if not isinstance(other, self.__class__):
+            return False
+        if id(self) == id(other):
+            return True
+        return self.__dict__ == other.__dict__

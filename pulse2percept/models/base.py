@@ -1,4 +1,4 @@
-"""`BaseModel`, `Model`, `NotBuiltError`, `Percept`, `SpatialModel`,
+"""`BaseModel`, `Model`, `NotBuiltError`, `SpatialModel`,
    `TemporalModel`"""
 import sys
 from abc import ABCMeta, abstractmethod
@@ -11,7 +11,6 @@ from ..stimuli import Stimulus
 from ..percepts import Percept
 from ..utils import (PrettyPrint, Frozen, FreezeError, bisect)
 from ..utils.constants import ZORDER
-from ..topography import (Curcio1990Map, Grid2D)
 
 
 class NotBuiltError(ValueError, AttributeError):
@@ -216,6 +215,8 @@ class SpatialModel(BaseModel, metaclass=ABCMeta):
 
     def get_default_params(self):
         """Return a dictionary of default values for all model parameters"""
+        # import at runtime to avoid circular import
+        from ..topography import Curcio1990Map
         params = {
             # We will be simulating a patch of the visual field (xrange/yrange
             # in degrees of visual angle), at a given spatial resolution (step
@@ -263,6 +264,8 @@ class SpatialModel(BaseModel, metaclass=ABCMeta):
             Example: ``model.build(param1=val)``
 
         """
+        # import at runtime to avoid circular import
+        from ..topography import Grid2D
         for key, val in build_params.items():
             setattr(self, key, val)
         # Build the spatial grid:
@@ -446,15 +449,16 @@ class SpatialModel(BaseModel, metaclass=ABCMeta):
         """
         if not self.is_built:
             self.build()
+
+        zorder = ZORDER['background'] + (0 if use_dva else 1)
+
+        ax = self.grid.plot(autoscale=autoscale, ax=ax, style=style, zorder=zorder,
+                            figsize=figsize, use_dva=use_dva)
+        
         if use_dva:
-            ax = self.grid.plot(autoscale=autoscale, ax=ax, style=style,
-                                zorder=ZORDER['background'], figsize=figsize)
             ax.set_xlabel('x (dva)')
             ax.set_ylabel('y (dva)')
         else:
-            ax = self.grid.plot(transform=self.retinotopy.dva_to_ret, ax=ax,
-                                zorder=ZORDER['background'] + 1, style=style,
-                                figsize=figsize, autoscale=autoscale)
             ax.set_xlabel('x (microns)')
             ax.set_ylabel('y (microns)')
         return ax
@@ -708,7 +712,7 @@ class Model(PrettyPrint):
         if spatial is not None and not isinstance(spatial, SpatialModel):
             if issubclass(spatial, SpatialModel):
                 # User should have passed an instance, not a class:
-                spatial = spatial()
+                spatial = spatial(**params)
             else:
                 raise TypeError(f"'spatial' must be a SpatialModel instance, "
                                 f"not {type(spatial)}.")
@@ -717,7 +721,7 @@ class Model(PrettyPrint):
         if temporal is not None and not isinstance(temporal, TemporalModel):
             if issubclass(temporal, TemporalModel):
                 # User should have passed an instance, not a class:
-                temporal = temporal()
+                temporal = temporal(**params)
             else:
                 raise TypeError(f"'temporal' must be a TemporalModel instance, "
                                 f"not {type(temporal)}.")

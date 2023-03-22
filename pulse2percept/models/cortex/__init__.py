@@ -10,8 +10,11 @@
     *  :ref:`Basic Concepts > Computational Models <topics-models>`
 
 """
-from .base import * # TODO
+from .base import ScoreboardModel, ScoreboardSpatial, CortexSpatial
 
 
 __all__ = [
+    'CortexSpatial',
+    'ScoreboardModel',
+    'ScoreboardSpatial'
 ]
